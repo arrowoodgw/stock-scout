@@ -1,12 +1,14 @@
 'use client';
 
 import { FormEvent, useEffect, useState } from 'react';
+import { FundamentalsPanel } from '@/components/FundamentalsPanel';
 import { HistoricalChart } from '@/components/HistoricalChart';
 import { PriceCard } from '@/components/PriceCard';
-import { getStockDataProvider } from '@/providers';
-import { HistoricalPoint, PriceRange, StockQuote } from '@/providers/types';
+import { getFundamentalsDataProvider, getStockDataProvider } from '@/providers';
+import { HistoricalPoint, PriceRange, StockFundamentals, StockQuote } from '@/providers/types';
 
-const provider = getStockDataProvider();
+const stockDataProvider = getStockDataProvider();
+const fundamentalsProvider = getFundamentalsDataProvider();
 const ranges: PriceRange[] = ['1M', '6M', '1Y'];
 
 export default function HomePage() {
@@ -15,20 +17,23 @@ export default function HomePage() {
   const [selectedRange, setSelectedRange] = useState<PriceRange>('1M');
   const [quote, setQuote] = useState<StockQuote | null>(null);
   const [history, setHistory] = useState<HistoricalPoint[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [fundamentals, setFundamentals] = useState<StockFundamentals | null>(null);
+  const [isPriceLoading, setIsPriceLoading] = useState(true);
+  const [isFundamentalsLoading, setIsFundamentalsLoading] = useState(true);
+  const [priceError, setPriceError] = useState<string | null>(null);
+  const [fundamentalsError, setFundamentalsError] = useState<string | null>(null);
 
   useEffect(() => {
     let isMounted = true;
 
-    const loadData = async () => {
-      setIsLoading(true);
-      setError(null);
+    const loadPriceData = async () => {
+      setIsPriceLoading(true);
+      setPriceError(null);
 
       try {
         const [nextQuote, nextHistory] = await Promise.all([
-          provider.getLatestQuote(activeTicker),
-          provider.getHistoricalPrices(activeTicker, selectedRange)
+          stockDataProvider.getLatestQuote(activeTicker),
+          stockDataProvider.getHistoricalPrices(activeTicker, selectedRange)
         ]);
 
         if (!isMounted) {
@@ -43,22 +48,59 @@ export default function HomePage() {
         }
 
         const message = loadError instanceof Error ? loadError.message : 'Could not load stock data.';
-        setError(message);
+        setPriceError(message);
         setQuote(null);
         setHistory([]);
       } finally {
         if (isMounted) {
-          setIsLoading(false);
+          setIsPriceLoading(false);
         }
       }
     };
 
-    void loadData();
+    void loadPriceData();
 
     return () => {
       isMounted = false;
     };
   }, [activeTicker, selectedRange]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadFundamentals = async () => {
+      setIsFundamentalsLoading(true);
+      setFundamentalsError(null);
+
+      try {
+        const nextFundamentals = await fundamentalsProvider.getFundamentals(activeTicker);
+
+        if (!isMounted) {
+          return;
+        }
+
+        setFundamentals(nextFundamentals);
+      } catch (loadError) {
+        if (!isMounted) {
+          return;
+        }
+
+        const message = loadError instanceof Error ? loadError.message : 'Could not load fundamentals.';
+        setFundamentalsError(message);
+        setFundamentals(null);
+      } finally {
+        if (isMounted) {
+          setIsFundamentalsLoading(false);
+        }
+      }
+    };
+
+    void loadFundamentals();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [activeTicker]);
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -75,7 +117,7 @@ export default function HomePage() {
       <section className="card">
         <header className="header">
           <h1>Stock Scout</h1>
-          <p>Track the latest stock price and historical trend.</p>
+          <p>Track stock performance and fundamentals for quick value checks.</p>
         </header>
 
         <form className="searchForm" onSubmit={handleSubmit}>
@@ -106,14 +148,20 @@ export default function HomePage() {
           ))}
         </div>
 
-        {isLoading ? <p className="status">Loading stock data...</p> : null}
-        {!isLoading && error ? <p className="status error">{error}</p> : null}
+        {isPriceLoading ? <p className="status">Loading stock data...</p> : null}
+        {!isPriceLoading && priceError ? <p className="status error">{priceError}</p> : null}
 
-        {!isLoading && !error && quote ? (
+        {!isPriceLoading && !priceError && quote ? (
           <>
             <PriceCard quote={quote} />
             <HistoricalChart data={history} ticker={quote.ticker} range={selectedRange} />
           </>
+        ) : null}
+
+        {isFundamentalsLoading ? <p className="status">Loading fundamentals...</p> : null}
+        {!isFundamentalsLoading && fundamentalsError ? <p className="status error">{fundamentalsError}</p> : null}
+        {!isFundamentalsLoading && !fundamentalsError && fundamentals ? (
+          <FundamentalsPanel fundamentals={fundamentals} />
         ) : null}
       </section>
     </main>
