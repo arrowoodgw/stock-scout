@@ -1,6 +1,11 @@
+import { MockFundamentalsDataProvider } from './mockFundamentalsDataProvider';
 import { MockStockDataProvider } from './mockStockDataProvider';
-import { StockDataProvider } from './types';
+import { FundamentalsDataProvider, StockDataProvider } from './types';
 
 export function getStockDataProvider(): StockDataProvider {
   return new MockStockDataProvider();
+}
+
+export function getFundamentalsDataProvider(): FundamentalsDataProvider {
+  return new MockFundamentalsDataProvider();
 }
