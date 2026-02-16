@@ -1,0 +1,147 @@
+:root {
+  color-scheme: light;
+  font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: #f5f7fb;
+  color: #1d2433;
+}
+
+.page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem 1rem;
+}
+
+.card {
+  width: min(760px, 100%);
+  background: white;
+  border-radius: 16px;
+  box-shadow: 0 10px 30px rgba(26, 39, 68, 0.08);
+  padding: 1.5rem;
+}
+
+.header h1 {
+  margin: 0;
+  font-size: 1.6rem;
+}
+
+.header p {
+  margin: 0.4rem 0 1.2rem;
+  color: #5b6474;
+}
+
+.searchForm {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.searchForm input {
+  flex: 1;
+  border: 1px solid #d4daea;
+  border-radius: 10px;
+  padding: 0.7rem 0.8rem;
+  font-size: 1rem;
+}
+
+.searchForm button,
+.rangeButtons button {
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.searchForm button {
+  background: #1d4ed8;
+  color: white;
+  padding: 0.7rem 1rem;
+  font-weight: 600;
+}
+
+.rangeButtons {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.rangeButtons button {
+  padding: 0.45rem 0.8rem;
+  background: #e9eefc;
+  color: #193069;
+}
+
+.rangeButtons .selected {
+  background: #d8e3ff;
+  font-weight: 700;
+}
+
+.status {
+  margin: 1rem 0 0;
+  color: #43506a;
+}
+
+.status.error {
+  color: #b42318;
+}
+
+.priceCard {
+  margin-top: 1.2rem;
+  padding: 1rem;
+  border: 1px solid #e4e9f6;
+  border-radius: 12px;
+}
+
+.priceLine {
+  margin: 0.25rem 0 0;
+  font-size: 1.6rem;
+  font-weight: 700;
+}
+
+.subtle {
+  color: #5f6a80;
+  margin: 0;
+}
+
+.chartWrap {
+  margin-top: 1rem;
+  border: 1px solid #e4e9f6;
+  border-radius: 12px;
+  padding: 0.75rem;
+}
+
+.chartTitle {
+  margin: 0 0 0.5rem;
+}
+
+.chart {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.chartMeta {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 0.5rem;
+  font-size: 0.85rem;
+  color: #5f6a80;
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  border: 0;
+}
