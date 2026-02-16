@@ -1,10 +1,11 @@
 import './globals.css';
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
+import { AppNav } from '@/components/AppNav';
 
 export const metadata: Metadata = {
   title: 'Stock Scout',
-  description: 'Milestone 1 stock quote and historical chart viewer'
+  description: 'Milestone 3 stock rankings and backtest lite with mocked data'
 };
 
 type RootLayoutProps = {
@@ -14,7 +15,10 @@ type RootLayoutProps = {
 export default function RootLayout({ children }: RootLayoutProps) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        <AppNav />
+        {children}
+      </body>
     </html>
   );
 }

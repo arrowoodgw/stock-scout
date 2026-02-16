@@ -10,7 +10,8 @@ const knownTickers: Record<string, SeedConfig> = {
   AAPL: { base: 190, trend: 0.09, volatility: 2.8 },
   MSFT: { base: 420, trend: 0.11, volatility: 3.1 },
   TSLA: { base: 220, trend: 0.07, volatility: 6.2 },
-  NVDA: { base: 840, trend: 0.2, volatility: 9.4 }
+  NVDA: { base: 840, trend: 0.2, volatility: 9.4 },
+  SPY: { base: 510, trend: 0.08, volatility: 2.3 }
 };
 
 const tradingDays = 252;
@@ -33,13 +34,19 @@ function tickerToSeed(ticker: string) {
   return ticker.split('').reduce((sum, char) => sum + char.charCodeAt(0), 0);
 }
 
+function buildDefaultConfig(ticker: string): SeedConfig {
+  const seed = tickerToSeed(ticker);
+
+  return {
+    base: 30 + (seed % 900),
+    trend: 0.03 + (seed % 12) * 0.01,
+    volatility: 1.8 + (seed % 50) * 0.08
+  };
+}
+
 function buildYearHistory(ticker: string): HistoricalPoint[] {
   const normalizedTicker = ticker.toUpperCase();
-  const config = knownTickers[normalizedTicker];
-
-  if (!config) {
-    throw new Error(`Ticker "${normalizedTicker}" is not available in mock data.`);
-  }
+  const config = knownTickers[normalizedTicker] ?? buildDefaultConfig(normalizedTicker);
 
   const random = seededRandom(tickerToSeed(normalizedTicker));
   const today = new Date();
