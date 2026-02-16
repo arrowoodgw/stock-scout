@@ -1,76 +1,76 @@
 # Stock Scout
 
-Stock Scout is a web application for tracking stock performance and identifying potentially undervalued investment opportunities over time.
+Stock Scout is a milestone-based project for exploring stock analysis workflows.
 
-The project is intentionally built in stages to support iterative development and learning.
+This repository currently implements **Milestone 1 (M1)** only:
+- Enter a stock ticker (e.g., `AAPL`)
+- View the latest price
+- View a simple historical chart with `1M / 6M / 1Y` ranges
 
----
+## Milestone 1 Notes
 
-## 🎯 Vision
+- Built with **Next.js + TypeScript**
+- Uses a **mock data provider** (no API keys required)
+- Data provider logic is separated from UI logic so real APIs can be swapped in later
+- Includes loading and error states
 
-Stock Scout will evolve into a tool that:
+Supported mock tickers:
+- `AAPL`
+- `MSFT`
+- `TSLA`
+- `NVDA`
 
-- Tracks historical stock price performance
-- Displays key financial fundamentals
-- Incorporates external news signals
-- Generates simple valuation and opportunity scores
-- Eventually supports watchlists and alerts
+Entering any other ticker will show an error state in M1.
 
-The focus is clarity, extensibility, and learning — not building a trading platform.
+## Run Locally
 
----
+### 1) Install dependencies
 
-## 🚀 Roadmap
+```bash
+npm install
+```
 
-### Milestone 1 (M1)
-- Enter a stock ticker (e.g., AAPL)
-- View latest price
-- View 1M / 6M / 1Y historical chart
+### 2) Start the development server
 
-### Milestone 2 (M2)
-- Display core fundamentals:
-  - P/E ratio
- - Revenue growth
-  - Margins
-  - Price-to-sales
-- Introduce a simple “undervaluation score”
+```bash
+npm run dev
+```
 
-### Milestone 3 (M3)
-- Ingest recent news articles
-- Tag sentiment/topics
-- Surface notable watchlist events
+### 3) Open the app
 
-### Milestone 4 (Future)
-- Alerts
-- Backtesting
-- Portfolio simulation
+Visit:
 
----
+```text
+http://localhost:3000
+```
 
-## 🏗 Architecture Principles
+## Scripts
 
-- Use TypeScript
-- Separate data providers from UI
-- Make APIs swappable (mock first, real later)
-- Keep each milestone independently functional
-- Prefer simple, understandable structure over premature complexity
+```bash
+npm run dev    # start local dev server
+npm run build  # create production build
+npm run start  # run production server
+npm run lint   # run Next.js lint checks
+```
 
----
+## Project Structure
 
-## ⚙️ Development
+```text
+app/
+  page.tsx                # UI and state handling for M1
+  layout.tsx              # root layout
+src/
+  components/
+    PriceCard.tsx         # latest price display
+    HistoricalChart.tsx   # simple SVG line chart
+  providers/
+    types.ts              # provider interface + shared types
+    mockStockDataProvider.ts
+    index.ts              # provider factory (swappable later)
+```
 
-Initial milestone (M1) will not require authentication, database storage, or API keys.
+## Out of Scope (Not Implemented Yet)
 
-Future integrations may introduce:
-- Market data APIs
-- Financial fundamentals APIs
-- News APIs
-
-Environment setup and run instructions will be added after the first scaffold is implemented.
-
----
-
-## 📌 Disclaimer
-
-This project is for educational and exploratory purposes only.  
-It is not investment advice.
+- Milestone 2 fundamentals/valuation score
+- Milestone 3 news ingestion and sentiment
+- Milestone 4 alerts/backtesting/portfolio simulation
