@@ -1,5 +1,9 @@
 export type PriceRange = '1M' | '6M' | '1Y';
 
+export type RequestOptions = {
+  forceRefresh?: boolean;
+};
+
 export type StockQuote = {
   ticker: string;
   price: number;
@@ -23,10 +27,10 @@ export type StockFundamentals = {
 };
 
 export interface StockDataProvider {
-  getLatestQuote(ticker: string): Promise<StockQuote>;
-  getHistoricalPrices(ticker: string, range: PriceRange): Promise<HistoricalPoint[]>;
+  getLatestQuote(ticker: string, options?: RequestOptions): Promise<StockQuote>;
+  getHistoricalPrices(ticker: string, range: PriceRange, options?: RequestOptions): Promise<HistoricalPoint[]>;
 }
 
 export interface FundamentalsDataProvider {
-  getFundamentals(ticker: string): Promise<StockFundamentals>;
+  getFundamentals(ticker: string, options?: RequestOptions): Promise<StockFundamentals>;
 }

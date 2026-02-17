@@ -1,14 +1,15 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { getFundamentalsDataProvider, getStockDataProvider } from '@/providers';
+import { getFundamentalsDataProvider } from '@/providers';
+import { MockStockDataProvider } from '@/providers/mockStockDataProvider';
 import { StockFundamentals } from '@/providers/types';
 import { calculateValueScore } from '@/scoring/calculateValueScore';
 import { defaultUniverse } from '@/universe/defaultUniverse';
 import { currencyFormatter, formatLargeCurrency, numberFormatter } from '@/utils/formatters';
 
 const fundamentalsProvider = getFundamentalsDataProvider();
-const stockDataProvider = getStockDataProvider();
+const stockDataProvider = new MockStockDataProvider();
 
 type Row = {
   ticker: string;

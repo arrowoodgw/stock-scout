@@ -30,6 +30,8 @@ export function TickerDetailView({ initialTicker = 'AAPL' }: TickerDetailViewPro
   const [isFundamentalsLoading, setIsFundamentalsLoading] = useState(true);
   const [priceError, setPriceError] = useState<string | null>(null);
   const [fundamentalsError, setFundamentalsError] = useState<string | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<string | null>(null);
 
   useEffect(() => {
     setInputTicker(normalizedInitial);
@@ -44,9 +46,10 @@ export function TickerDetailView({ initialTicker = 'AAPL' }: TickerDetailViewPro
       setPriceError(null);
 
       try {
+        const forceRefresh = refreshKey > 0;
         const [nextQuote, nextHistory] = await Promise.all([
-          stockDataProvider.getLatestQuote(activeTicker),
-          stockDataProvider.getHistoricalPrices(activeTicker, selectedRange)
+          stockDataProvider.getLatestQuote(activeTicker, { forceRefresh }),
+          stockDataProvider.getHistoricalPrices(activeTicker, selectedRange, { forceRefresh })
         ]);
 
         if (!isMounted) {
@@ -76,7 +79,7 @@ export function TickerDetailView({ initialTicker = 'AAPL' }: TickerDetailViewPro
     return () => {
       isMounted = false;
     };
-  }, [activeTicker, selectedRange]);
+  }, [activeTicker, selectedRange, refreshKey]);
 
   useEffect(() => {
     let isMounted = true;
@@ -86,7 +89,8 @@ export function TickerDetailView({ initialTicker = 'AAPL' }: TickerDetailViewPro
       setFundamentalsError(null);
 
       try {
-        const nextFundamentals = await fundamentalsProvider.getFundamentals(activeTicker);
+        const forceRefresh = refreshKey > 0;
+        const nextFundamentals = await fundamentalsProvider.getFundamentals(activeTicker, { forceRefresh });
 
         if (!isMounted) {
           return;
@@ -113,7 +117,13 @@ export function TickerDetailView({ initialTicker = 'AAPL' }: TickerDetailViewPro
     return () => {
       isMounted = false;
     };
-  }, [activeTicker]);
+  }, [activeTicker, refreshKey]);
+
+  useEffect(() => {
+    if (!isPriceLoading && !isFundamentalsLoading && !priceError && !fundamentalsError) {
+      setLastUpdatedAt(new Date().toISOString());
+    }
+  }, [isPriceLoading, isFundamentalsLoading, priceError, fundamentalsError]);
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -146,7 +156,12 @@ export function TickerDetailView({ initialTicker = 'AAPL' }: TickerDetailViewPro
           autoComplete="off"
         />
         <button type="submit">Load</button>
+        <button type="button" className="refreshButton" onClick={() => setRefreshKey((value) => value + 1)}>
+          Refresh data
+        </button>
       </form>
+
+      {lastUpdatedAt ? <p className="status">Last refreshed: {new Date(lastUpdatedAt).toLocaleString()}</p> : null}
 
       <div className="rangeButtons" role="group" aria-label="Historical range">
         {ranges.map((range) => (
