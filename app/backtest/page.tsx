@@ -1,13 +1,14 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { ComparisonChart, ComparisonPoint } from '@/components/ComparisonChart';
-import { getFundamentalsDataProvider, getStockDataProvider } from '@/providers';
+import { getFundamentalsDataProvider } from '@/providers';
+import { MockStockDataProvider } from '@/providers/mockStockDataProvider';
 import { calculateValueScore } from '@/scoring/calculateValueScore';
 import { defaultUniverse } from '@/universe/defaultUniverse';
 
 const fundamentalsProvider = getFundamentalsDataProvider();
-const stockDataProvider = getStockDataProvider();
+const stockDataProvider = new MockStockDataProvider();
 
 const periodToDays = {
   '3M': 63,
@@ -39,86 +40,64 @@ export default function BacktestPage() {
   const [period, setPeriod] = useState<Period>('6M');
   const [topN, setTopN] = useState<TopN>(5);
   const [result, setResult] = useState<Result | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    let isMounted = true;
+  const runSimulation = async () => {
+    setIsLoading(true);
+    setError(null);
 
-    const runSimulation = async () => {
-      setIsLoading(true);
-      setError(null);
+    try {
+      const fundamentalsList = await Promise.all(defaultUniverse.map((ticker) => fundamentalsProvider.getFundamentals(ticker)));
 
-      try {
-        const fundamentalsList = await Promise.all(
-          defaultUniverse.map((ticker) => fundamentalsProvider.getFundamentals(ticker))
-        );
+      const selectedTickers = fundamentalsList
+        .map((item) => ({ ticker: item.ticker, score: calculateValueScore(item) }))
+        .sort((a, b) => b.score - a.score)
+        .slice(0, topN)
+        .map((item) => item.ticker);
 
-        const selectedTickers = fundamentalsList
-          .map((item) => ({ ticker: item.ticker, score: calculateValueScore(item) }))
-          .sort((a, b) => b.score - a.score)
-          .slice(0, topN)
-          .map((item) => item.ticker);
+      const histories = await Promise.all(
+        [...selectedTickers, 'SPY'].map((ticker) => stockDataProvider.getHistoricalPrices(ticker, '1Y'))
+      );
 
-        const histories = await Promise.all(
-          [...selectedTickers, 'SPY'].map((ticker) => stockDataProvider.getHistoricalPrices(ticker, '1Y'))
-        );
+      const requestedDays = periodToDays[period];
+      const slicedHistories = histories.map((points) => points.slice(-requestedDays));
+      const dayCount = Math.min(...slicedHistories.map((points) => points.length));
 
-        if (!isMounted) {
-          return;
-        }
+      const portfolioSeries = Array.from({ length: dayCount }).map((_, index) => {
+        const normalizedReturns = slicedHistories
+          .slice(0, -1)
+          .map((points) => points[index].price / points[0].price);
+        return normalizedReturns.reduce((sum, value) => sum + value, 0) / normalizedReturns.length;
+      });
 
-        const requestedDays = periodToDays[period];
-        const slicedHistories = histories.map((points) => points.slice(-requestedDays));
-        const dayCount = Math.min(...slicedHistories.map((points) => points.length));
+      const benchmarkSeries = slicedHistories[slicedHistories.length - 1]
+        .slice(0, dayCount)
+        .map((point) => point.price / slicedHistories[slicedHistories.length - 1][0].price);
 
-        const portfolioSeries = Array.from({ length: dayCount }).map((_, index) => {
-          const normalizedReturns = slicedHistories
-            .slice(0, -1)
-            .map((points) => points[index].price / points[0].price);
-          return normalizedReturns.reduce((sum, value) => sum + value, 0) / normalizedReturns.length;
-        });
+      const normalizedPortfolio = portfolioSeries.map((value) => value * 100);
+      const normalizedBenchmark = benchmarkSeries.map((value) => value * 100);
 
-        const benchmarkSeries = slicedHistories[slicedHistories.length - 1]
-          .slice(0, dayCount)
-          .map((point) => point.price / slicedHistories[slicedHistories.length - 1][0].price);
+      const chartData: ComparisonPoint[] = Array.from({ length: dayCount }).map((_, index) => ({
+        label: `${index + 1}`,
+        portfolio: normalizedPortfolio[index],
+        benchmark: normalizedBenchmark[index]
+      }));
 
-        const normalizedPortfolio = portfolioSeries.map((value) => value * 100);
-        const normalizedBenchmark = benchmarkSeries.map((value) => value * 100);
-
-        const chartData: ComparisonPoint[] = Array.from({ length: dayCount }).map((_, index) => ({
-          label: `${index + 1}`,
-          portfolio: normalizedPortfolio[index],
-          benchmark: normalizedBenchmark[index]
-        }));
-
-        setResult({
-          portfolioReturn: totalReturn(normalizedPortfolio),
-          benchmarkReturn: totalReturn(normalizedBenchmark),
-          selectedTickers,
-          chartData
-        });
-      } catch (runError) {
-        if (!isMounted) {
-          return;
-        }
-
-        const message = runError instanceof Error ? runError.message : 'Could not run backtest.';
-        setError(message);
-        setResult(null);
-      } finally {
-        if (isMounted) {
-          setIsLoading(false);
-        }
-      }
-    };
-
-    void runSimulation();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [period, topN]);
+      setResult({
+        portfolioReturn: totalReturn(normalizedPortfolio),
+        benchmarkReturn: totalReturn(normalizedBenchmark),
+        selectedTickers,
+        chartData
+      });
+    } catch (runError) {
+      const message = runError instanceof Error ? runError.message : 'Could not run backtest.';
+      setError(message);
+      setResult(null);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const periodLabel = useMemo(() => {
     if (period === '3M') {
@@ -157,6 +136,9 @@ export default function BacktestPage() {
               <option value="20">20</option>
             </select>
           </label>
+          <button type="button" onClick={() => void runSimulation()}>
+            Run Backtest
+          </button>
         </div>
 
         {isLoading ? <p className="status">Running simulation...</p> : null}

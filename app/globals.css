@@ -101,6 +101,14 @@ body {
   font-weight: 600;
 }
 
+.refreshButton {
+  background: #e9eefc;
+  color: #193069;
+  padding: 0.7rem 1rem;
+  font-weight: 600;
+}
+
+
 .rangeButtons {
   display: flex;
   gap: 0.5rem;
@@ -283,6 +291,17 @@ body {
   flex-direction: column;
   gap: 0.35rem;
   color: #4e5b74;
+}
+
+.toolbar button {
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  background: #1d4ed8;
+  color: white;
+  padding: 0.7rem 1rem;
+  font-weight: 600;
+  align-self: flex-end;
 }
 
 .tableWrap {
