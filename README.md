@@ -24,7 +24,7 @@ This repository now implements **Milestone 3 (M3)** with a **real-data option fo
 Set `DATA_MODE` (server) and/or `NEXT_PUBLIC_DATA_MODE` (client bundle):
 
 - `mock` (default): deterministic mocked stock data
-- `real`: ticker detail page uses Alpha Vantage for quotes + daily history through server API routes
+- `real`: stock quote/history use `AlphaVantageStockDataProvider` (daily series) while fundamentals remain mocked
 
 Example `.env.local`:
 
@@ -42,7 +42,7 @@ ALPHAVANTAGE_API_KEY=your_key_here
 
 - `ALPHAVANTAGE_API_KEY`
   - Required when `DATA_MODE=real`
-  - Used server-side by `/api/market/quote` and `/api/market/history`
+  - Read by `AlphaVantageStockDataProvider` on the server
 - `DATA_MODE`
   - Server/provider selector: `mock | real`
 - `NEXT_PUBLIC_DATA_MODE`
@@ -52,17 +52,11 @@ ALPHAVANTAGE_API_KEY=your_key_here
 
 ## Caching, Refresh, and Request De-duplication
 
-When `DATA_MODE=real`, stock market data uses in-memory cache + in-flight de-duplication:
+When `DATA_MODE=real`, stock quote/history use Alpha Vantage daily time series with a small in-memory cache and in-flight de-duplication:
 
-- Latest quote TTL: **10 minutes**
-- Historical prices TTL: **12 hours**
+- Stock data TTL: **~12 minutes**
+- Cache key: `ticker + range`
 - Fundamentals TTL: **24 hours** (still mocked provider, cached to keep interface stable)
-
-Concurrent requests for the same key share one in-flight promise:
-
-- Quote key: `ticker`
-- History key: `ticker + range`
-- Fundamentals key: `ticker`
 
 ### Refresh behavior
 
@@ -72,9 +66,8 @@ On Ticker Detail, clicking **Refresh data** sends `refresh=1` and bypasses cache
 
 ## Rate Limits and Safety Notes
 
-- Alpha Vantage free tiers are rate-limited; app surfaces provider rate-limit responses with user-friendly errors.
-- Ticker validation guards against malformed symbols before upstream calls.
-- Invalid/missing key and invalid ticker conditions are surfaced in UI.
+- Alpha Vantage free tiers are rate-limited (commonly 5 requests/minute and 500/day on free keys); cache helps reduce repeat calls.
+- App surfaces clear errors for missing `ALPHAVANTAGE_API_KEY`, invalid symbols, and rate-limit responses.
 - Rankings and Backtest remain mocked to avoid universe-wide real-data fan-out and accidental API overuse.
 
 ---
