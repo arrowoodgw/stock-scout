@@ -1,6 +1,6 @@
 import { FundamentalsDataProvider, StockFundamentals } from './types';
 
-type FundamentalsConfig = Omit<StockFundamentals, 'ticker'>;
+type FundamentalsConfig = Omit<StockFundamentals, 'ticker' | 'asOf'>;
 
 const knownFundamentals: Record<string, FundamentalsConfig> = {
   AAPL: {
@@ -56,6 +56,7 @@ export class MockFundamentalsDataProvider implements FundamentalsDataProvider {
 
     return {
       ticker: normalizedTicker,
+      asOf: new Date().toISOString(),
       ...(known ?? buildDefaultFundamentals(normalizedTicker))
     };
   }

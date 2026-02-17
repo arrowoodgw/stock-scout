@@ -14,6 +14,7 @@ This repository now implements **Milestone 3 (M3)** with a **real-data option fo
   - Fundamentals panel + deterministic Value Score
   - **Refresh data** button to bypass cache and force re-fetch
   - Last refreshed timestamp
+  - In `real` mode, fundamentals come from SEC EDGAR/XBRL company facts
 - **Rankings** page across a default stock universe (still mocked quote data)
 - **Backtest Lite** page (mocked) with explicit **Run Backtest** action
 
@@ -24,7 +25,7 @@ This repository now implements **Milestone 3 (M3)** with a **real-data option fo
 Set `DATA_MODE` (server) and/or `NEXT_PUBLIC_DATA_MODE` (client bundle):
 
 - `mock` (default): deterministic mocked stock data
-- `real`: stock quote/history use `AlphaVantageStockDataProvider` (daily series) while fundamentals remain mocked
+- `real`: stock quote/history use `AlphaVantageStockDataProvider` (daily series) and fundamentals use `SecFundamentalsDataProvider`
 
 Example `.env.local`:
 
@@ -32,6 +33,7 @@ Example `.env.local`:
 DATA_MODE=real
 NEXT_PUBLIC_DATA_MODE=real
 ALPHAVANTAGE_API_KEY=your_key_here
+SEC_USER_AGENT="YourName your@email.com"
 ```
 
 > Do not commit `.env.local` or secrets.
@@ -47,6 +49,9 @@ ALPHAVANTAGE_API_KEY=your_key_here
   - Server/provider selector: `mock | real`
 - `NEXT_PUBLIC_DATA_MODE`
   - Client-visible provider selector: `mock | real`
+- `SEC_USER_AGENT`
+  - Required when `DATA_MODE=real` for SEC EDGAR/XBRL requests
+  - Example: `"YourName your@email.com"`
 
 ---
 
@@ -56,7 +61,9 @@ When `DATA_MODE=real`, stock quote/history use Alpha Vantage daily time series w
 
 - Stock data TTL: **~12 minutes**
 - Cache key: `ticker + range`
-- Fundamentals TTL: **24 hours** (still mocked provider, cached to keep interface stable)
+- Fundamentals TTL: **24 hours** (SEC company facts cached in-memory per ticker)
+- SEC ticker mapping cache: in-memory and reused across requests
+- In-flight de-duplication: concurrent requests for the same ticker share one fetch promise
 
 ### Refresh behavior
 
@@ -67,8 +74,9 @@ On Ticker Detail, clicking **Refresh data** sends `refresh=1` and bypasses cache
 ## Rate Limits and Safety Notes
 
 - Alpha Vantage free tiers are rate-limited (commonly 5 requests/minute and 500/day on free keys); cache helps reduce repeat calls.
-- App surfaces clear errors for missing `ALPHAVANTAGE_API_KEY`, invalid symbols, and rate-limit responses.
-- Rankings and Backtest remain mocked to avoid universe-wide real-data fan-out and accidental API overuse.
+- SEC APIs require a descriptive `User-Agent` and fair access behavior; Stock Scout sends `SEC_USER_AGENT`, caches fundamentals for 24h, and de-duplicates in-flight requests.
+- App surfaces clear errors for missing `ALPHAVANTAGE_API_KEY` / `SEC_USER_AGENT`, invalid symbols, and upstream API failures.
+- Rankings and Backtest remain mocked for prices to keep broad-universe fan-out controlled.
 
 ---
 

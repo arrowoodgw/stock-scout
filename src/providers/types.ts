@@ -17,13 +17,14 @@ export type HistoricalPoint = {
 
 export type StockFundamentals = {
   ticker: string;
-  marketCap: number;
-  peTtm: number;
-  ps: number;
-  epsTtm: number;
-  revenueTtm: number;
-  revenueGrowthYoY: number;
-  operatingMargin: number;
+  marketCap: number | null;
+  peTtm: number | null;
+  ps: number | null;
+  epsTtm: number | null;
+  revenueTtm: number | null;
+  revenueGrowthYoY: number | null;
+  operatingMargin: number | null;
+  asOf: string | null;
 };
 
 export interface StockDataProvider {
