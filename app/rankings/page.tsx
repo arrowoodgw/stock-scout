@@ -14,11 +14,11 @@ const stockDataProvider = new MockStockDataProvider();
 type Row = {
   ticker: string;
   valueScore: number;
-  marketCap: number;
-  peTtm: number;
-  ps: number;
-  revenueGrowthYoY: number;
-  operatingMargin: number;
+  marketCap: number | null;
+  peTtm: number | null;
+  ps: number | null;
+  revenueGrowthYoY: number | null;
+  operatingMargin: number | null;
   latestPrice: number;
 };
 
@@ -89,7 +89,7 @@ export default function RankingsPage() {
 
     return [...base].sort((a, b) => {
       if (sortBy === 'marketCap') {
-        return b.marketCap - a.marketCap;
+        return (b.marketCap ?? 0) - (a.marketCap ?? 0);
       }
 
       return b.valueScore - a.valueScore;
@@ -145,11 +145,11 @@ export default function RankingsPage() {
                   <tr key={row.ticker}>
                     <td>{row.ticker}</td>
                     <td>{row.valueScore}/100</td>
-                    <td>{formatLargeCurrency(row.marketCap)}</td>
-                    <td>{numberFormatter.format(row.peTtm)}</td>
-                    <td>{numberFormatter.format(row.ps)}</td>
-                    <td>{row.revenueGrowthYoY.toFixed(1)}%</td>
-                    <td>{row.operatingMargin.toFixed(1)}%</td>
+                    <td>{row.marketCap === null ? '—' : formatLargeCurrency(row.marketCap)}</td>
+                    <td>{row.peTtm === null ? '—' : numberFormatter.format(row.peTtm)}</td>
+                    <td>{row.ps === null ? '—' : numberFormatter.format(row.ps)}</td>
+                    <td>{row.revenueGrowthYoY === null ? '—' : `${row.revenueGrowthYoY.toFixed(1)}%`}</td>
+                    <td>{row.operatingMargin === null ? '—' : `${row.operatingMargin.toFixed(1)}%`}</td>
                     <td>{currencyFormatter.format(row.latestPrice)}</td>
                   </tr>
                 ))}

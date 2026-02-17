@@ -6,24 +6,42 @@ type FundamentalsPanelProps = {
   fundamentals: StockFundamentals;
 };
 
+function renderNumber(value: number | null) {
+  return value === null ? '—' : numberFormatter.format(value);
+}
+
+function renderPercent(value: number | null) {
+  return value === null ? '—' : `${value.toFixed(1)}%`;
+}
+
+function renderCurrency(value: number | null) {
+  return value === null ? '—' : currencyFormatter.format(value);
+}
+
+function renderLargeCurrency(value: number | null) {
+  return value === null ? '—' : formatLargeCurrency(value);
+}
+
 export function FundamentalsPanel({ fundamentals }: FundamentalsPanelProps) {
   const valueScore = calculateValueScore(fundamentals);
 
   const rows = [
-    { label: 'Market Cap', value: formatLargeCurrency(fundamentals.marketCap) },
-    { label: 'P/E (TTM)', value: numberFormatter.format(fundamentals.peTtm) },
-    { label: 'P/S', value: numberFormatter.format(fundamentals.ps) },
-    { label: 'EPS (TTM)', value: currencyFormatter.format(fundamentals.epsTtm) },
-    { label: 'Revenue (TTM)', value: formatLargeCurrency(fundamentals.revenueTtm) },
-    { label: 'Revenue Year-over-Year Growth (%)', value: `${fundamentals.revenueGrowthYoY.toFixed(1)}%` },
-    { label: 'Operating Margin (%)', value: `${fundamentals.operatingMargin.toFixed(1)}%` }
+    { label: 'Market Cap', value: renderLargeCurrency(fundamentals.marketCap) },
+    { label: 'P/E (TTM)', value: renderNumber(fundamentals.peTtm) },
+    { label: 'P/S', value: renderNumber(fundamentals.ps) },
+    { label: 'EPS (TTM)', value: renderCurrency(fundamentals.epsTtm) },
+    { label: 'Revenue (TTM)', value: renderLargeCurrency(fundamentals.revenueTtm) },
+    { label: 'Revenue Year-over-Year Growth (%)', value: renderPercent(fundamentals.revenueGrowthYoY) },
+    { label: 'Operating Margin (%)', value: renderPercent(fundamentals.operatingMargin) }
   ];
 
   return (
     <section className="fundamentalsPanel" aria-live="polite">
       <div className="fundamentalsHeader">
         <h2>Fundamentals</h2>
-        <p className="subtle">{fundamentals.ticker} snapshot (mocked)</p>
+        <p className="subtle">
+          {fundamentals.ticker} snapshot{fundamentals.asOf ? ` · As of ${new Date(fundamentals.asOf).toLocaleDateString()}` : ''}
+        </p>
       </div>
 
       <dl className="fundamentalsGrid">
