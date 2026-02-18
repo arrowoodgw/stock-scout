@@ -2,32 +2,39 @@
 
 Stock Scout is a milestone-based project for exploring stock analysis workflows, deterministic ranking, and simple portfolio simulation concepts.
 
-This repository now implements **Milestone 3 (M3)** with a **real-data option for single-ticker price data**.
+This repository implements M3 with a **Top 50 U.S. stocks by market cap universe** and a **real-data mode**.
 
----
+## Universe Definition
+
+- Universe: **Top 50 U.S. stocks by market cap**
+- As of: **2026-02-17**
+- Source: **CompaniesMarketCap (updated daily)**
+
+Defined in `src/universe/top50MarketCap.ts`.
 
 ## Current Functionality
 
-- **Home** page with “Today's Top Picks” (Top 5 by Value Score)
-- **Ticker Detail** page for single-ticker analysis
-  - Latest quote + 1M/6M/1Y chart
+- **Home** page
+  - Initial load performs one browser request to `GET /api/market/universe-quotes`
+  - Shows Top picks from cached universe quotes
+- **Ticker Detail** page
+  - 1M / 6M / 1Y chart
+  - Latest price derived from the cached/on-demand history response (no separate quote call)
   - Fundamentals panel + deterministic Value Score
-  - **Refresh data** button to bypass cache and force re-fetch
-  - Last refreshed timestamp
-  - In `real` mode, fundamentals come from SEC EDGAR/XBRL company facts
-- **Rankings** page across a default stock universe (still mocked quote data)
-- **Backtest Lite** page (mocked) with explicit **Run Backtest** action
+  - **Refresh data** button bypasses cache
+  - **Buy** action records local trades
+- **Rankings** page
+  - Uses Top 50 universe and cached universe quotes
+- **Backtest Lite** page
+  - Runs over the Top 50 universe
+- **Portfolio** page
+  - Reads trades from `/data/portfolio.json` when filesystem is available
+  - Falls back to browser `localStorage` when filesystem writes are unavailable
+  - Uses cached universe quotes for current value
 
----
+## Real Mode Environment Variables
 
-## Data Modes
-
-Set `DATA_MODE` (server) and/or `NEXT_PUBLIC_DATA_MODE` (client bundle):
-
-- `mock` (default): deterministic mocked stock data
-- `real`: stock quote/history use `AlphaVantageStockDataProvider` (daily series) and fundamentals use `SecFundamentalsDataProvider`
-
-Example `.env.local`:
+Use `.env.local`:
 
 ```bash
 DATA_MODE=real
@@ -36,73 +43,33 @@ ALPHAVANTAGE_API_KEY=your_key_here
 SEC_USER_AGENT="YourName your@email.com"
 ```
 
-> Do not commit `.env.local` or secrets.
+- `ALPHAVANTAGE_API_KEY`: required for real market data
+- `DATA_MODE`: server mode (`mock | real`)
+- `NEXT_PUBLIC_DATA_MODE`: client mode (`mock | real`)
+- `SEC_USER_AGENT`: required for SEC company facts requests
 
----
+## Caching + Refresh Behavior
 
-## Environment Variables
-
-- `ALPHAVANTAGE_API_KEY`
-  - Required when `DATA_MODE=real`
-  - Read by `AlphaVantageStockDataProvider` on the server
-- `DATA_MODE`
-  - Server/provider selector: `mock | real`
-- `NEXT_PUBLIC_DATA_MODE`
-  - Client-visible provider selector: `mock | real`
-- `SEC_USER_AGENT`
-  - Required when `DATA_MODE=real` for SEC EDGAR/XBRL requests
-  - Example: `"YourName your@email.com"`
-
----
-
-## Caching, Refresh, and Request De-duplication
-
-When `DATA_MODE=real`, stock quote/history use Alpha Vantage daily time series with a small in-memory cache and in-flight de-duplication:
-
-- Stock data TTL: **~12 minutes**
-- Cache key: `ticker + range`
-- Fundamentals TTL: **24 hours** (SEC company facts cached in-memory per ticker)
-- SEC ticker mapping cache: in-memory and reused across requests
-- In-flight de-duplication: concurrent requests for the same ticker share one fetch promise
-
-### Refresh behavior
-
-On Ticker Detail, clicking **Refresh data** sends `refresh=1` and bypasses cache for both quote/history and fundamentals.
-
----
+- **Universe quotes cache** (`/api/market/universe-quotes`)
+  - key: ticker -> `{ price, asOf, source }`
+  - TTL: ~10 minutes
+  - concurrent refreshes are coalesced to one in-flight request
+- **History cache** (Alpha Vantage daily series)
+  - full daily series cached per ticker
+  - TTL: ~12 hours
+  - range selection (1M/6M/1Y) slices in memory, without a new Alpha Vantage fetch
+- **Fundamentals cache** (SEC company facts)
+  - ticker -> CIK mapping cached in-memory
+  - fundamentals cached for 24 hours
+  - fetched on demand only (e.g., ticker detail / explicit page load)
+- **Refresh buttons**
+  - Ticker Detail `Refresh data` sends `refresh=1` and bypasses caches
 
 ## Rate Limits and Safety Notes
 
-- Alpha Vantage free tiers are rate-limited (commonly 5 requests/minute and 500/day on free keys); cache helps reduce repeat calls.
-- SEC APIs require a descriptive `User-Agent` and fair access behavior; Stock Scout sends `SEC_USER_AGENT`, caches fundamentals for 24h, and de-duplicates in-flight requests.
-- App surfaces clear errors for missing `ALPHAVANTAGE_API_KEY` / `SEC_USER_AGENT`, invalid symbols, and upstream API failures.
-- Rankings and Backtest remain mocked for prices to keep broad-universe fan-out controlled.
-
----
-
-## Backtest Lite: How It Works
-
-### Inputs
-- **Period**: `3M`, `6M`, `1Y`
-- **Top N**: `5`, `10`, `20`
-
-### Rules
-1. Rank the default universe by deterministic Value Score.
-2. Select the Top N tickers.
-3. Allocate equally across selected tickers.
-4. Run a buy-and-hold simulation over the chosen period using mocked historical prices.
-5. Compare portfolio return vs benchmark ticker `SPY` (mocked).
-
-### Execution behavior
-- Simulation runs **only when user clicks `Run Backtest`**.
-
-### Assumptions / Limitations
-- Uses mocked/generated data for universe/backtest.
-- Does **not** include transaction costs, slippage, taxes, dividends, or rebalancing.
-- Uses current mocked fundamentals for ranking (not point-in-time historical fundamentals).
-- Educational only; not investment advice.
-
----
+- Alpha Vantage free tiers are rate-limited; caching and de-duplication reduce fan-out.
+- Universe quote fetch attempts the Alpha Vantage batch quote endpoint first; missing tickers fall back to per-symbol quote requests.
+- SEC APIs require a descriptive `User-Agent`; set `SEC_USER_AGENT`.
 
 ## Run Locally
 
@@ -113,19 +80,15 @@ npm run dev
 
 Open http://localhost:3000.
 
----
-
 ## Scripts
 
 ```bash
-npm run dev    # start local dev server
-npm run build  # create production build
-npm run start  # run production build
-npm run lint   # run lint checks
+npm run dev
+npm run build
+npm run start
+npm run lint
 ```
-
----
 
 ## Disclaimer
 
-This project is for educational and exploratory purposes only. It is not investment advice.
+Educational and exploratory use only. Not investment advice.

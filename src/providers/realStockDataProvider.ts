@@ -1,3 +1,4 @@
+import { top50MarketCap } from '@/universe/top50MarketCap';
 import { HistoricalPoint, PriceRange, RequestOptions, StockDataProvider, StockQuote } from './types';
 
 function toErrorMessage(error: unknown, fallback: string): string {
@@ -20,16 +21,48 @@ async function fetchJson<T>(url: string): Promise<T> {
   return payload;
 }
 
-export class RealStockDataProvider implements StockDataProvider {
-  async getLatestQuote(ticker: string, options?: RequestOptions): Promise<StockQuote> {
-    const params = new URLSearchParams({ ticker: ticker.toUpperCase() });
+function quoteFromHistory(ticker: string, history: HistoricalPoint[]): StockQuote {
+  const latest = history[history.length - 1];
 
-    if (options?.forceRefresh) {
-      params.set('refresh', '1');
-    }
+  if (!latest) {
+    throw new Error('No historical data available for ticker.');
+  }
+
+  return {
+    ticker,
+    price: latest.price,
+    updatedAt: latest.date
+  };
+}
+
+export class RealStockDataProvider implements StockDataProvider {
+  async getLatestQuote(tickerInput: string, options?: RequestOptions): Promise<StockQuote> {
+    const ticker = tickerInput.toUpperCase();
+    const refreshQuery = options?.forceRefresh ? '?refresh=1' : '';
 
     try {
-      return await fetchJson<StockQuote>(`/api/market/quote?${params.toString()}`);
+      if (top50MarketCap.tickers.includes(ticker as (typeof top50MarketCap.tickers)[number])) {
+        const payload = await fetchJson<{ quotes: Record<string, { price: number; asOf: string }> }>(
+          `/api/market/universe-quotes${refreshQuery}`
+        );
+        const quote = payload.quotes[ticker];
+
+        if (quote) {
+          return {
+            ticker,
+            price: quote.price,
+            updatedAt: quote.asOf
+          };
+        }
+      }
+
+      const historyParams = new URLSearchParams({ ticker, range: '1Y' });
+      if (options?.forceRefresh) {
+        historyParams.set('refresh', '1');
+      }
+
+      const history = await fetchJson<HistoricalPoint[]>(`/api/market/history?${historyParams.toString()}`);
+      return quoteFromHistory(ticker, history);
     } catch (error) {
       throw new Error(toErrorMessage(error, 'Could not load latest quote.'));
     }
