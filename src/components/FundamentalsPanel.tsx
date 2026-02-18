@@ -1,9 +1,10 @@
 import { StockFundamentals } from '@/providers/types';
-import { calculateValueScore } from '@/scoring/calculateValueScore';
+import { ValueScoreBreakdown, calculateValueScore } from '@/scoring/calculateValueScore';
 import { currencyFormatter, formatLargeCurrency, numberFormatter } from '@/utils/formatters';
 
 type FundamentalsPanelProps = {
   fundamentals: StockFundamentals;
+  scoreBreakdown?: ValueScoreBreakdown | null;
 };
 
 function renderNumber(value: number | null) {
@@ -22,8 +23,9 @@ function renderLargeCurrency(value: number | null) {
   return value === null ? '—' : formatLargeCurrency(value);
 }
 
-export function FundamentalsPanel({ fundamentals }: FundamentalsPanelProps) {
-  const valueScore = calculateValueScore(fundamentals);
+export function FundamentalsPanel({ fundamentals, scoreBreakdown }: FundamentalsPanelProps) {
+  const scoreResult = calculateValueScore(fundamentals);
+  const breakdown = scoreBreakdown ?? scoreResult.breakdown;
 
   const rows = [
     { label: 'Market Cap', value: renderLargeCurrency(fundamentals.marketCap) },
@@ -55,9 +57,29 @@ export function FundamentalsPanel({ fundamentals }: FundamentalsPanelProps) {
 
       <div className="valueScoreBox">
         <p className="subtle">Value Score</p>
-        <p className="valueScore">{valueScore}/100</p>
+        <p className="valueScore">{scoreResult.total}/100</p>
+
+        <dl className="scoreBreakdown">
+          <div className="scoreBreakdownRow">
+            <dt>P/E</dt>
+            <dd>{breakdown.peScore}/25</dd>
+          </div>
+          <div className="scoreBreakdownRow">
+            <dt>P/S</dt>
+            <dd>{breakdown.psScore}/25</dd>
+          </div>
+          <div className="scoreBreakdownRow">
+            <dt>Revenue Growth</dt>
+            <dd>{breakdown.growthScore}/25</dd>
+          </div>
+          <div className="scoreBreakdownRow">
+            <dt>Operating Margin</dt>
+            <dd>{breakdown.marginScore}/25</dd>
+          </div>
+        </dl>
+
         <p className="scoreExplanation">
-          Score formula: lower P/E and P/S increase the score, while stronger revenue growth and operating margin add points.
+          Each of four components contributes 0–25 points to a 0–100 total.
         </p>
       </div>
     </section>

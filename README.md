@@ -2,7 +2,7 @@
 
 Stock Scout is a milestone-based project for exploring stock analysis workflows, deterministic ranking, and simple portfolio simulation concepts.
 
-This repository implements M3 with a **Top 50 U.S. stocks by market cap universe** and a **real-data mode**.
+This repository implements M4 with a **Top 50 U.S. stocks by market cap universe**, a **real-data mode** powered by Polygon.io and SEC EDGAR, a normalized **Value Score** breakdown, and a full **Portfolio** feature.
 
 ## Universe Definition
 
@@ -16,59 +16,91 @@ Defined in `src/universe/top50MarketCap.ts`.
 
 - **Home** page
   - Initial load performs one browser request to `GET /api/market/universe-quotes`
-  - Shows Top picks from cached universe quotes
+  - Shows Top 5 picks with **Buy** buttons (opens purchase modal)
 - **Ticker Detail** page
   - 1M / 6M / 1Y chart
-  - Latest price derived from the cached/on-demand history response (no separate quote call)
-  - Fundamentals panel + deterministic Value Score
+  - Fundamentals panel with Value Score and component breakdown (P/E, P/S, Revenue Growth, Operating Margin — each 0–25 pts)
   - **Refresh data** button bypasses cache
   - **Buy** action records local trades
 - **Rankings** page
-  - Uses Top 50 universe and cached universe quotes
+  - Top 50 universe ranked by Value Score with **Buy** buttons per row
 - **Backtest Lite** page
   - Runs over the Top 50 universe
 - **Portfolio** page
-  - Reads trades from `/data/portfolio.json` when filesystem is available
-  - Falls back to browser `localStorage` when filesystem writes are unavailable
-  - Uses cached universe quotes for current value
+  - Loads holdings from `data/portfolio.json` via `GET /api/portfolio`
+  - Fetches current prices per ticker in parallel from the provider
+  - Table: Ticker | Shares | Purchase Price | Cost Basis | Current Price | Current Value | Gain/Loss $ | Gain/Loss %
+  - Summary totals and **Refresh Prices** button
+  - Gains colored green, losses red; price errors shown inline without failing the page
 
-## Real Mode Environment Variables
+## Setting Up `.env.local`
 
-Use `.env.local`:
+Copy the example file and fill in your values:
 
 ```bash
-DATA_MODE=real
-NEXT_PUBLIC_DATA_MODE=real
-ALPHAVANTAGE_API_KEY=your_key_here
-SEC_USER_AGENT="YourName your@email.com"
+cp .env.local.example .env.local
 ```
 
-- `ALPHAVANTAGE_API_KEY`: required for real market data
-- `DATA_MODE`: server mode (`mock | real`)
-- `NEXT_PUBLIC_DATA_MODE`: client mode (`mock | real`)
-- `SEC_USER_AGENT`: required for SEC company facts requests
+Then edit `.env.local`. Never commit that file — it is in `.gitignore`.
+
+## Environment Variables
+
+| Variable | Required for real mode | Description |
+|---|---|---|
+| `POLYGON_API_KEY` | Yes | Polygon.io API key for live price data. Sign up free at https://polygon.io |
+| `SEC_USER_AGENT` | Yes | Your name and email for SEC EDGAR fair-use policy, e.g. `Jane Doe jane@example.com` |
+| `DATA_MODE` | No | `mock` (default) or `real` (server-side) |
+| `NEXT_PUBLIC_DATA_MODE` | No | Must match `DATA_MODE` (client-side) |
+
+See `.env.local.example` for a fully documented example.
+
+## Real Mode Setup
+
+```bash
+# .env.local
+DATA_MODE=real
+NEXT_PUBLIC_DATA_MODE=real
+POLYGON_API_KEY=your_polygon_api_key_here
+SEC_USER_AGENT=Your Name your@email.com
+```
+
+## Value Score Algorithm
+
+Each stock is scored 0–100 based on four equally-weighted components (0–25 each):
+
+| Component | Metric | Max when |
+|---|---|---|
+| P/E | `peTtm` | P/E ≤ 10 |
+| P/S | `ps` | P/S ≤ 1 |
+| Revenue Growth | `revenueGrowthYoY` | Growth ≥ 30% |
+| Operating Margin | `operatingMargin` | Margin ≥ 25% |
+
+The breakdown is shown on the Ticker Detail fundamentals panel.
+
+## Portfolio Data File
+
+Holdings are stored locally at `data/portfolio.json` (created automatically; excluded from git via `.gitignore`).
+
+- `GET /api/portfolio` — returns `{ holdings: PortfolioHolding[] }`
+- `POST /api/portfolio/buy` — body `{ ticker, shares, purchasePrice }`, appends a holding with today's date
 
 ## Caching + Refresh Behavior
 
 - **Universe quotes cache** (`/api/market/universe-quotes`)
-  - key: ticker -> `{ price, asOf, source }`
-  - TTL: ~10 minutes
-  - concurrent refreshes are coalesced to one in-flight request
-- **History cache** (Alpha Vantage daily series)
-  - full daily series cached per ticker
+  - key: ticker → `{ price, asOf, source }`
+  - TTL: ~10 minutes; concurrent refreshes coalesced
+- **History cache** (Polygon daily series)
+  - Full daily series cached per ticker; range sliced in memory
   - TTL: ~12 hours
-  - range selection (1M/6M/1Y) slices in memory, without a new Alpha Vantage fetch
 - **Fundamentals cache** (SEC company facts)
-  - ticker -> CIK mapping cached in-memory
-  - fundamentals cached for 24 hours
-  - fetched on demand only (e.g., ticker detail / explicit page load)
+  - ticker → CIK cached in-memory; fundamentals cached 24 hours
 - **Refresh buttons**
   - Ticker Detail `Refresh data` sends `refresh=1` and bypasses caches
 
-## Rate Limits and Safety Notes
+## Rate Limits
 
-- Alpha Vantage free tiers are rate-limited; caching and de-duplication reduce fan-out.
-- Universe quote fetch attempts the Alpha Vantage batch quote endpoint first; missing tickers fall back to per-symbol quote requests.
+- Polygon free tier: 5 requests per minute. The provider enforces a 12-second minimum interval between requests; caching and in-flight deduplication reduce API fan-out.
+- Universe quote fetch uses Polygon's snapshot endpoint (single request for all tickers) with per-ticker fallback.
 - SEC APIs require a descriptive `User-Agent`; set `SEC_USER_AGENT`.
 
 ## Run Locally
