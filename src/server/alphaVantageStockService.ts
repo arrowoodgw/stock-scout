@@ -1,7 +1,10 @@
 import { HistoricalPoint, PriceRange, StockQuote } from '@/providers/types';
+import { readFileCache, writeFileCache } from './fileCache';
 
 const API_BASE = 'https://www.alphavantage.co/query';
 const QUOTE_TTL_MS = 10 * 60 * 1000;
+// Full history dataset is cached per-ticker (not per-range) to avoid redundant API calls.
+// All three ranges (1M, 6M, 1Y) are served from one cached fetch.
 const HISTORY_TTL_MS = 12 * 60 * 60 * 1000;
 const VALID_TICKER = /^[A-Z][A-Z0-9.\-]{0,9}$/;
 
@@ -10,6 +13,8 @@ type CacheEntry<T> = {
   value: T;
 };
 
+// In-memory layer sits in front of the file cache to avoid repeated disk reads
+// within the same process lifetime.
 const quoteCache = new Map<string, CacheEntry<StockQuote>>();
 const historyCache = new Map<string, CacheEntry<HistoricalPoint[]>>();
 
@@ -95,18 +100,27 @@ function sliceRange(points: HistoricalPoint[], range: PriceRange): HistoricalPoi
 
 export async function getLatestQuote(tickerInput: string, forceRefresh = false): Promise<StockQuote> {
   const ticker = normalizeTicker(tickerInput);
-  const cacheKey = ticker;
+  const cacheKey = `quote_${ticker}`;
   const now = Date.now();
 
   if (!forceRefresh) {
-    const cached = quoteCache.get(cacheKey);
-    if (cached && cached.expiresAt > now) {
-      return cached.value;
+    // 1. Check in-memory cache
+    const mem = quoteCache.get(cacheKey);
+    if (mem && mem.expiresAt > now) {
+      return mem.value;
     }
 
+    // 2. Deduplicate concurrent requests
     const existing = inFlightQuote.get(cacheKey);
     if (existing) {
       return existing;
+    }
+
+    // 3. Check file cache (survives process restarts)
+    const fromFile = await readFileCache<StockQuote>(cacheKey);
+    if (fromFile) {
+      quoteCache.set(cacheKey, { value: fromFile, expiresAt: now + QUOTE_TTL_MS });
+      return fromFile;
     }
   }
 
@@ -133,7 +147,10 @@ export async function getLatestQuote(tickerInput: string, forceRefresh = false):
       updatedAt
     };
 
-    quoteCache.set(cacheKey, { value: result, expiresAt: Date.now() + QUOTE_TTL_MS });
+    const expiresAt = Date.now() + QUOTE_TTL_MS;
+    quoteCache.set(cacheKey, { value: result, expiresAt });
+    // Persist to disk so the cache survives server restarts
+    await writeFileCache(cacheKey, result, QUOTE_TTL_MS);
     return result;
   })();
 
@@ -152,18 +169,29 @@ export async function getHistoricalPrices(
   forceRefresh = false
 ): Promise<HistoricalPoint[]> {
   const ticker = normalizeTicker(tickerInput);
-  const cacheKey = `${ticker}:${range}`;
+  // Cache the full dataset per ticker (not per range) so that 1M, 6M, and 1Y
+  // all share a single API call and a single cache entry.
+  const cacheKey = `history_${ticker}`;
   const now = Date.now();
 
   if (!forceRefresh) {
-    const cached = historyCache.get(cacheKey);
-    if (cached && cached.expiresAt > now) {
-      return cached.value;
+    // 1. Check in-memory cache
+    const mem = historyCache.get(cacheKey);
+    if (mem && mem.expiresAt > now) {
+      return sliceRange(mem.value, range);
     }
 
+    // 2. Deduplicate concurrent in-flight requests for the same ticker
     const existing = inFlightHistory.get(cacheKey);
     if (existing) {
-      return existing;
+      return sliceRange(await existing, range);
+    }
+
+    // 3. Check file cache (survives process restarts)
+    const fromFile = await readFileCache<HistoricalPoint[]>(cacheKey);
+    if (fromFile) {
+      historyCache.set(cacheKey, { value: fromFile, expiresAt: now + HISTORY_TTL_MS });
+      return sliceRange(fromFile, range);
     }
   }
 
@@ -196,15 +224,18 @@ export async function getHistoricalPrices(
       throw new Error('Historical data payload was empty.');
     }
 
-    const result = sliceRange(sorted, range);
-    historyCache.set(cacheKey, { value: result, expiresAt: Date.now() + HISTORY_TTL_MS });
-    return result;
+    const expiresAt = Date.now() + HISTORY_TTL_MS;
+    historyCache.set(cacheKey, { value: sorted, expiresAt });
+    // Persist full dataset to disk so the cache survives server restarts
+    await writeFileCache(cacheKey, sorted, HISTORY_TTL_MS);
+    return sorted;
   })();
 
   inFlightHistory.set(cacheKey, request);
 
   try {
-    return await request;
+    const full = await request;
+    return sliceRange(full, range);
   } finally {
     inFlightHistory.delete(cacheKey);
   }
