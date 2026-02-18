@@ -1,6 +1,7 @@
 import { HistoricalPoint, PriceRange, RequestOptions, StockDataProvider, StockQuote } from './types';
 
 const HISTORY_TTL_MS = 12 * 60 * 60 * 1000;
+const QUOTE_TTL_MS = 5 * 60 * 1000;
 // Polygon free tier: 5 requests per minute → enforce at least 12 s between requests
 const MIN_REQUEST_INTERVAL_MS = 12 * 1000;
 
@@ -21,8 +22,15 @@ type CachedHistory = {
   history: HistoricalPoint[];
 };
 
+type CachedQuote = {
+  expiresAt: number;
+  quote: StockQuote;
+};
+
 const historyCache = new Map<string, CachedHistory>();
 const inFlightHistory = new Map<string, Promise<CachedHistory>>();
+const quoteCache = new Map<string, CachedQuote>();
+const inFlightQuote = new Map<string, Promise<StockQuote>>();
 
 let lastRequestAt = 0;
 
@@ -214,13 +222,36 @@ export class PolygonStockDataProvider implements StockDataProvider {
       return { ticker, price: latest.price, updatedAt: latest.date };
     }
 
-    // Server-side: use previous close from Polygon
-    const price = await fetchPolygonPrev(ticker);
-    return {
-      ticker,
-      price,
-      updatedAt: new Date().toISOString()
-    };
+    // Server-side: use previous close from Polygon with a short-lived cache
+    if (!options?.forceRefresh) {
+      const cached = quoteCache.get(ticker);
+      if (cached && cached.expiresAt > Date.now()) {
+        return cached.quote;
+      }
+
+      const activeRequest = inFlightQuote.get(ticker);
+      if (activeRequest) {
+        return activeRequest;
+      }
+    }
+
+    const request = (async () => {
+      const price = await fetchPolygonPrev(ticker);
+      const quote: StockQuote = {
+        ticker,
+        price,
+        updatedAt: new Date().toISOString()
+      };
+      quoteCache.set(ticker, { expiresAt: Date.now() + QUOTE_TTL_MS, quote });
+      return quote;
+    })();
+
+    inFlightQuote.set(ticker, request);
+    try {
+      return await request;
+    } finally {
+      inFlightQuote.delete(ticker);
+    }
   }
 
   async getHistoricalPrices(tickerInput: string, range: PriceRange, options?: RequestOptions): Promise<HistoricalPoint[]> {

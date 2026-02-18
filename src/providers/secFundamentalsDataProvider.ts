@@ -211,6 +211,18 @@ function computeTtm(points: FactPoint[]) {
   return computeAnnualFallback(points);
 }
 
+function computeRevenueGrowthYoY(points: FactPoint[]): number | null {
+  const annual = points
+    .filter((p): p is FactPoint & { val: number; end: string } =>
+      p.fp?.toUpperCase() === 'FY' && hasValidValue(p))
+    .sort((a, b) => asTimestamp(b.end) - asTimestamp(a.end));
+  if (annual.length < 2) return null;
+  const current = annual[0].val;
+  const prior = annual[1].val;
+  if (!prior) return null;
+  return ((current - prior) / Math.abs(prior)) * 100;
+}
+
 function getLatestEndDate(...pointSets: FactPoint[][]) {
   const timestamps = pointSets
     .flat()
@@ -229,6 +241,7 @@ function toFundamentals(ticker: string, payload: CompanyFactsResponse): StockFun
   const revenuePoints = getFactPoints(payload, ['Revenues', 'RevenueFromContractWithCustomerExcludingAssessedTax', 'SalesRevenueNet'], ['USD']);
   const operatingIncomePoints = getFactPoints(payload, ['OperatingIncomeLoss'], ['USD']);
   const epsPoints = getFactPoints(payload, ['EarningsPerShareDiluted', 'EarningsPerShareBasic'], ['USD/shares']);
+  const sharesPoints = getFactPoints(payload, ['CommonStockSharesOutstanding'], ['shares']);
 
   const revenueTtm = computeTtm(revenuePoints);
   const operatingIncomeTtm = computeTtm(operatingIncomePoints);
@@ -239,6 +252,14 @@ function toFundamentals(ticker: string, payload: CompanyFactsResponse): StockFun
       ? (operatingIncomeTtm / revenueTtm) * 100
       : null;
 
+  const revenueGrowthYoY = computeRevenueGrowthYoY(revenuePoints);
+
+  // Most recent shares outstanding — sorted descending by period end date
+  const sharesOutstanding =
+    sharesPoints
+      .filter(hasValidValue)
+      .sort((a, b) => asTimestamp(b.end) - asTimestamp(a.end))[0]?.val ?? null;
+
   return {
     ticker,
     marketCap: null,
@@ -246,9 +267,10 @@ function toFundamentals(ticker: string, payload: CompanyFactsResponse): StockFun
     ps: null,
     epsTtm,
     revenueTtm,
-    revenueGrowthYoY: null,
+    revenueGrowthYoY,
     operatingMargin,
-    asOf: getLatestEndDate(revenuePoints, operatingIncomePoints, epsPoints)
+    asOf: getLatestEndDate(revenuePoints, operatingIncomePoints, epsPoints),
+    sharesOutstanding
   };
 }
 
