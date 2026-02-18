@@ -13,7 +13,8 @@ type SecTickerEntry = {
 type SecCompanyTickersResponse = Record<string, SecTickerEntry>;
 
 type FactPoint = {
-  end?: string;
+  start?: string;  // period start date (YYYY-MM-DD) — present in company facts API
+  end?: string;    // period end date
   filed?: string;
   form?: string;
   fp?: string;
@@ -144,18 +145,50 @@ function asTimestamp(value?: string) {
   return new Date(`${value}T00:00:00.000Z`).getTime();
 }
 
-function isQuarterlyPoint(point: FactPoint) {
-  const fp = point.fp?.toUpperCase();
-  return fp === 'Q1' || fp === 'Q2' || fp === 'Q3' || fp === 'Q4';
-}
-
 function hasValidValue(point: FactPoint): point is FactPoint & { val: number; end: string } {
   return typeof point.val === 'number' && Number.isFinite(point.val) && !!point.end;
 }
 
+/**
+ * Returns the length of this fact point's reporting period in days.
+ * When `start` is present in the SEC data, this is exact.
+ * Returns null when the period length cannot be determined.
+ */
+function periodLengthDays(point: FactPoint): number | null {
+  if (!point.start || !point.end) return null;
+  const days = (asTimestamp(point.end) - asTimestamp(point.start)) / (1000 * 60 * 60 * 24);
+  return Number.isFinite(days) ? days : null;
+}
+
+/**
+ * A quarterly point is standalone (not cumulative YTD) when:
+ * - fp is Q1/Q2/Q3/Q4, AND
+ * - the period span is roughly one quarter (45–120 days).
+ *
+ * SEC filers that report cumulative YTD in 10-Qs will have:
+ *   Q2 spanning ~180 days, Q3 spanning ~270 days, Q4 spanning ~365 days.
+ * We exclude those so the TTM sum is correct.
+ */
+function isStandaloneQuarterlyPoint(point: FactPoint) {
+  const fp = point.fp?.toUpperCase();
+  if (fp !== 'Q1' && fp !== 'Q2' && fp !== 'Q3' && fp !== 'Q4') return false;
+
+  const days = periodLengthDays(point);
+  if (days === null) {
+    // No start date — accept the point but only if it's truly labelled quarterly.
+    // We'll rely on the span-days guard in computeTtmFromQuarterlies to catch bad data.
+    return true;
+  }
+
+  // Standalone quarter: 45–120 days
+  return days >= 45 && days <= 120;
+}
+
 function computeTtmFromQuarterlies(points: FactPoint[]): number | null {
   const quarterlies = points
-    .filter((point): point is FactPoint & { val: number; end: string } => isQuarterlyPoint(point) && hasValidValue(point))
+    .filter((point): point is FactPoint & { val: number; end: string } =>
+      isStandaloneQuarterlyPoint(point) && hasValidValue(point)
+    )
     .sort((a, b) => asTimestamp(b.end) - asTimestamp(a.end));
 
   const uniqueByPeriod: Array<FactPoint & { val: number; end: string }> = [];
@@ -183,6 +216,7 @@ function computeTtmFromQuarterlies(points: FactPoint[]): number | null {
   const oldest = asTimestamp(uniqueByPeriod[3].end);
   const spanDays = (newest - oldest) / (1000 * 60 * 60 * 24);
 
+  // Four standalone quarters should span 270–400 days total
   if (!Number.isFinite(spanDays) || spanDays > 430) {
     return null;
   }
@@ -192,7 +226,9 @@ function computeTtmFromQuarterlies(points: FactPoint[]): number | null {
 
 function computeAnnualFallback(points: FactPoint[]): number | null {
   const annual = points
-    .filter((point): point is FactPoint & { val: number; end: string } => point.fp?.toUpperCase() === 'FY' && hasValidValue(point))
+    .filter((point): point is FactPoint & { val: number; end: string } =>
+      point.fp?.toUpperCase() === 'FY' && hasValidValue(point)
+    )
     .sort((a, b) => asTimestamp(b.end) - asTimestamp(a.end));
 
   if (annual.length === 0) {
@@ -209,6 +245,18 @@ function computeTtm(points: FactPoint[]) {
   }
 
   return computeAnnualFallback(points);
+}
+
+function computeRevenueGrowthYoY(points: FactPoint[]): number | null {
+  const annual = points
+    .filter((p): p is FactPoint & { val: number; end: string } =>
+      p.fp?.toUpperCase() === 'FY' && hasValidValue(p))
+    .sort((a, b) => asTimestamp(b.end) - asTimestamp(a.end));
+  if (annual.length < 2) return null;
+  const current = annual[0].val;
+  const prior = annual[1].val;
+  if (!prior) return null;
+  return ((current - prior) / Math.abs(prior)) * 100;
 }
 
 function getLatestEndDate(...pointSets: FactPoint[][]) {
@@ -229,6 +277,7 @@ function toFundamentals(ticker: string, payload: CompanyFactsResponse): StockFun
   const revenuePoints = getFactPoints(payload, ['Revenues', 'RevenueFromContractWithCustomerExcludingAssessedTax', 'SalesRevenueNet'], ['USD']);
   const operatingIncomePoints = getFactPoints(payload, ['OperatingIncomeLoss'], ['USD']);
   const epsPoints = getFactPoints(payload, ['EarningsPerShareDiluted', 'EarningsPerShareBasic'], ['USD/shares']);
+  const sharesPoints = getFactPoints(payload, ['CommonStockSharesOutstanding'], ['shares']);
 
   const revenueTtm = computeTtm(revenuePoints);
   const operatingIncomeTtm = computeTtm(operatingIncomePoints);
@@ -239,6 +288,14 @@ function toFundamentals(ticker: string, payload: CompanyFactsResponse): StockFun
       ? (operatingIncomeTtm / revenueTtm) * 100
       : null;
 
+  const revenueGrowthYoY = computeRevenueGrowthYoY(revenuePoints);
+
+  // Most recent shares outstanding — sorted descending by period end date
+  const sharesOutstanding =
+    sharesPoints
+      .filter(hasValidValue)
+      .sort((a, b) => asTimestamp(b.end) - asTimestamp(a.end))[0]?.val ?? null;
+
   return {
     ticker,
     marketCap: null,
@@ -246,9 +303,10 @@ function toFundamentals(ticker: string, payload: CompanyFactsResponse): StockFun
     ps: null,
     epsTtm,
     revenueTtm,
-    revenueGrowthYoY: null,
+    revenueGrowthYoY,
     operatingMargin,
-    asOf: getLatestEndDate(revenuePoints, operatingIncomePoints, epsPoints)
+    asOf: getLatestEndDate(revenuePoints, operatingIncomePoints, epsPoints),
+    sharesOutstanding
   };
 }
 

@@ -25,6 +25,8 @@ export type StockFundamentals = {
   revenueGrowthYoY: number | null;
   operatingMargin: number | null;
   asOf: string | null;
+  /** Shares outstanding from SEC EDGAR; used server-side to compute P/S. Not rendered in UI. */
+  sharesOutstanding?: number | null;
 };
 
 export interface StockDataProvider {
