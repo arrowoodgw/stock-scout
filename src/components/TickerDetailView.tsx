@@ -8,7 +8,7 @@ import { PriceCard } from '@/components/PriceCard';
 import { getFundamentalsDataProvider, getStockDataProvider } from '@/providers';
 import { HistoricalPoint, PriceRange, StockFundamentals, StockQuote } from '@/providers/types';
 import { PortfolioTrade } from '@/portfolio/types';
-import { calculateValueScore } from '@/scoring/calculateValueScore';
+import { calculateValueScore, ValueScoreResult } from '@/scoring/calculateValueScore';
 
 const stockDataProvider = getStockDataProvider();
 const fundamentalsProvider = getFundamentalsDataProvider();
@@ -171,7 +171,7 @@ export function TickerDetailView({ initialTicker = 'AAPL' }: TickerDetailViewPro
     router.push(`/ticker?ticker=${encodeURIComponent(nextTicker)}`);
   };
 
-  const valueScore = useMemo(() => {
+  const valueScore = useMemo((): ValueScoreResult | null => {
     if (!fundamentals) {
       return null;
     }
@@ -190,7 +190,7 @@ export function TickerDetailView({ initialTicker = 'AAPL' }: TickerDetailViewPro
         shares: 1,
         priceAtBuy: quote.price,
         date: new Date().toISOString(),
-        valueScoreAtBuy: valueScore
+        valueScoreAtBuy: valueScore?.total ?? null
       };
 
       const storage = await saveTrade(trade);
@@ -260,7 +260,7 @@ export function TickerDetailView({ initialTicker = 'AAPL' }: TickerDetailViewPro
       {isFundamentalsLoading ? <p className="status">Loading fundamentals...</p> : null}
       {!isFundamentalsLoading && fundamentalsError ? <p className="status error">{fundamentalsError}</p> : null}
       {!isFundamentalsLoading && !fundamentalsError && fundamentals ? (
-        <FundamentalsPanel fundamentals={fundamentals} />
+        <FundamentalsPanel fundamentals={fundamentals} scoreBreakdown={valueScore?.breakdown ?? null} />
       ) : null}
     </section>
   );

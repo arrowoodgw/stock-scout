@@ -21,7 +21,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(prices);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Could not load historical prices.';
-    const status = message.includes('Invalid') ? 400 : message.includes('Missing ALPHAVANTAGE_API_KEY') ? 500 : 502;
+    const status = message.includes('Invalid') ? 400 : message.includes('Missing POLYGON_API_KEY') ? 500 : 502;
     return NextResponse.json({ error: message }, { status });
   }
 }

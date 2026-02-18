@@ -1,9 +1,10 @@
 import { top50MarketCap } from '@/universe/top50MarketCap';
 import { readFileCache, writeFileCache } from './fileCache';
 
-const ALPHA_BASE = 'https://www.alphavantage.co/query';
 const QUOTE_TTL_MS = 10 * 60 * 1000;
 const UNIVERSE_CACHE_KEY = 'universe_quotes';
+// Polygon free tier: 5 requests per minute
+const MIN_REQUEST_INTERVAL_MS = 12 * 1000;
 
 type UniverseQuote = {
   price: number;
@@ -18,43 +19,50 @@ type QuoteCacheEntry = {
   quotes: UniverseQuoteMap;
 };
 
-type AlphaBatchResponse = {
-  Note?: string;
-  Information?: string;
-  'Error Message'?: string;
-  'Stock Quotes'?: Array<Record<string, string>>;
+type PolygonSnapshotTicker = {
+  ticker: string;
+  day?: { c?: number };
+  prevDay?: { c?: number };
+  lastTrade?: { p?: number };
+  lastQuote?: { P?: number };
+  updated?: number;
 };
 
-type AlphaGlobalResponse = {
-  Note?: string;
-  Information?: string;
-  'Error Message'?: string;
-  'Global Quote'?: Record<string, string>;
+type PolygonSnapshotResponse = {
+  status: string;
+  tickers?: PolygonSnapshotTicker[];
+  error?: string;
+};
+
+type PolygonPrevResponse = {
+  status: string;
+  results?: Array<{ c: number; t: number }>;
+  error?: string;
 };
 
 let cacheEntry: QuoteCacheEntry | null = null;
 let inFlightRefresh: Promise<UniverseQuoteMap> | null = null;
+let lastRequestAt = 0;
 
 function isRealMode() {
   return (process.env.DATA_MODE ?? 'mock').toLowerCase() === 'real';
 }
 
-function getApiKey() {
-  const key = process.env.ALPHAVANTAGE_API_KEY?.trim();
+function getPolygonApiKey() {
+  const key = process.env.POLYGON_API_KEY?.trim();
   if (!key) {
-    throw new Error('Missing ALPHAVANTAGE_API_KEY environment variable.');
+    throw new Error('Missing POLYGON_API_KEY environment variable.');
   }
   return key;
 }
 
-function validateAlphaPayload(payload: { Note?: string; Information?: string; 'Error Message'?: string }) {
-  if (payload.Note || payload.Information) {
-    throw new Error('Alpha Vantage rate limit reached. Please wait and try again.');
+async function rateLimitedFetch(url: string): Promise<Response> {
+  const elapsed = Date.now() - lastRequestAt;
+  if (elapsed < MIN_REQUEST_INTERVAL_MS) {
+    await new Promise((resolve) => setTimeout(resolve, MIN_REQUEST_INTERVAL_MS - elapsed));
   }
-
-  if (payload['Error Message']) {
-    throw new Error('Alpha Vantage returned an error for quote request.');
-  }
+  lastRequestAt = Date.now();
+  return fetch(url, { cache: 'no-store' });
 }
 
 function mockPrice(ticker: string) {
@@ -78,94 +86,85 @@ function buildMockQuotes(): UniverseQuoteMap {
   );
 }
 
-function parseBatchQuotes(payload: AlphaBatchResponse): UniverseQuoteMap {
-  const rows = payload['Stock Quotes'] ?? [];
+async function fetchPolygonSnapshot(tickers: string[]): Promise<UniverseQuoteMap> {
+  const apiKey = getPolygonApiKey();
+  const tickerList = tickers.join(',');
+  const url = `https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers?tickers=${encodeURIComponent(tickerList)}&apiKey=${apiKey}`;
 
-  return rows.reduce<UniverseQuoteMap>((acc, row) => {
-    const ticker = row['1. symbol']?.trim().toUpperCase();
-    const price = Number(row['2. price']);
-    const asOf = row['4. timestamp'];
+  const response = await rateLimitedFetch(url);
+  if (!response.ok) {
+    throw new Error(`Polygon snapshot request failed (${response.status}).`);
+  }
 
-    if (!ticker || !Number.isFinite(price) || price <= 0 || !asOf) {
-      return acc;
+  const payload = (await response.json()) as PolygonSnapshotResponse;
+
+  if (payload.status === 'ERROR') {
+    throw new Error(payload.error ?? 'Polygon snapshot returned an error.');
+  }
+
+  const asOf = new Date().toISOString();
+  const result: UniverseQuoteMap = {};
+
+  for (const item of payload.tickers ?? []) {
+    const ticker = item.ticker?.trim().toUpperCase();
+    if (!ticker) continue;
+
+    // Use day close, then prevDay close, then lastTrade price, then lastQuote ask
+    const price = item.day?.c ?? item.prevDay?.c ?? item.lastTrade?.p ?? item.lastQuote?.P;
+
+    if (price != null && Number.isFinite(price) && price > 0) {
+      result[ticker] = {
+        price,
+        asOf: item.updated ? new Date(Math.floor(item.updated / 1_000_000)).toISOString() : asOf,
+        source: 'Polygon snapshot'
+      };
     }
+  }
 
-    acc[ticker] = {
-      price,
-      asOf: new Date(`${asOf}T00:00:00.000Z`).toISOString(),
-      source: 'Alpha Vantage BATCH_STOCK_QUOTES'
-    };
-
-    return acc;
-  }, {});
+  return result;
 }
 
-async function fetchBatchQuotes(): Promise<UniverseQuoteMap> {
-  const apiKey = getApiKey();
-  const params = new URLSearchParams({
-    function: 'BATCH_STOCK_QUOTES',
-    symbols: top50MarketCap.tickers.join(','),
-    apikey: apiKey
-  });
+async function fetchPolygonPrev(ticker: string): Promise<UniverseQuote | null> {
+  const apiKey = getPolygonApiKey();
+  const url = `https://api.polygon.io/v2/aggs/ticker/${encodeURIComponent(ticker)}/prev?apiKey=${apiKey}`;
 
-  const response = await fetch(`${ALPHA_BASE}?${params.toString()}`, { cache: 'no-store' });
-  if (!response.ok) {
-    throw new Error(`Alpha Vantage batch quote request failed (${response.status}).`);
-  }
+  const response = await rateLimitedFetch(url);
+  if (!response.ok) return null;
 
-  const payload = (await response.json()) as AlphaBatchResponse;
-  validateAlphaPayload(payload);
-  return parseBatchQuotes(payload);
-}
+  const payload = (await response.json()) as PolygonPrevResponse;
+  if (payload.status === 'ERROR' || !payload.results?.length) return null;
 
-async function fetchGlobalQuote(ticker: string): Promise<UniverseQuote | null> {
-  const apiKey = getApiKey();
-  const params = new URLSearchParams({ function: 'GLOBAL_QUOTE', symbol: ticker, apikey: apiKey });
-  const response = await fetch(`${ALPHA_BASE}?${params.toString()}`, { cache: 'no-store' });
-
-  if (!response.ok) {
-    throw new Error(`Alpha Vantage global quote request failed (${response.status}).`);
-  }
-
-  const payload = (await response.json()) as AlphaGlobalResponse;
-  validateAlphaPayload(payload);
-
-  const quote = payload['Global Quote'];
-  const price = Number(quote?.['05. price']);
-  const latestDay = quote?.['07. latest trading day'];
-
-  if (!Number.isFinite(price) || price <= 0 || !latestDay) {
-    return null;
-  }
+  const result = payload.results[0];
+  if (!result || !Number.isFinite(result.c) || result.c <= 0) return null;
 
   return {
-    price,
-    asOf: new Date(`${latestDay}T00:00:00.000Z`).toISOString(),
-    source: 'Alpha Vantage GLOBAL_QUOTE'
+    price: result.c,
+    asOf: new Date(result.t).toISOString(),
+    source: 'Polygon prev'
   };
 }
 
 async function fetchRealQuotes(): Promise<UniverseQuoteMap> {
-  const batchQuotes = await fetchBatchQuotes().catch(() => ({}));
-  const missingTickers = top50MarketCap.tickers.filter((ticker) => !batchQuotes[ticker]);
+  const tickers: string[] = [...top50MarketCap.tickers];
 
-  if (missingTickers.length === 0) {
-    return batchQuotes;
+  // Try snapshot endpoint first (one request for all tickers)
+  let quotes: UniverseQuoteMap = {};
+  try {
+    quotes = await fetchPolygonSnapshot(tickers);
+  } catch {
+    // snapshot failed, will fill missing tickers below
   }
 
-  const fallbackEntries = await Promise.all(
-    missingTickers.map(async (ticker) => {
-      const quote = await fetchGlobalQuote(ticker);
-      return quote ? ([ticker, quote] as const) : null;
-    })
-  );
+  // Fall back to per-ticker prev endpoint for missing tickers
+  const missingTickers = tickers.filter((ticker) => !quotes[ticker]);
+  for (const ticker of missingTickers) {
+    const quote = await fetchPolygonPrev(ticker).catch(() => null);
+    if (quote) {
+      quotes[ticker] = quote;
+    }
+  }
 
-  const fallbackMap = Object.fromEntries(fallbackEntries.filter((entry): entry is readonly [string, UniverseQuote] => entry !== null));
-
-  return {
-    ...batchQuotes,
-    ...fallbackMap
-  };
+  return quotes;
 }
 
 async function refreshQuotes() {

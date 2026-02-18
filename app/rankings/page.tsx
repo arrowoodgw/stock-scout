@@ -32,6 +32,11 @@ type Row = {
 
 type SortField = 'valueScore' | 'marketCap';
 
+type BuyModalState = {
+  ticker: string;
+  price: number;
+} | null;
+
 async function fetchUniverseQuotes() {
   const response = await fetch('/api/market/universe-quotes', { cache: 'no-store' });
   const payload = (await response.json()) as UniverseQuotesResponse & { error?: string };
@@ -43,12 +48,30 @@ async function fetchUniverseQuotes() {
   return payload;
 }
 
+async function postBuy(ticker: string, shares: number, purchasePrice: number): Promise<void> {
+  const response = await fetch('/api/portfolio/buy', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ticker, shares, purchasePrice })
+  });
+
+  if (!response.ok) {
+    const payload = (await response.json()) as { error?: string };
+    throw new Error(payload.error ?? 'Could not save purchase.');
+  }
+}
+
 export default function RankingsPage() {
   const [rows, setRows] = useState<Row[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [sortBy, setSortBy] = useState<SortField>('valueScore');
+
+  const [buyModal, setBuyModal] = useState<BuyModalState>(null);
+  const [buyShares, setBuyShares] = useState(1);
+  const [isBuying, setIsBuying] = useState(false);
+  const [buySuccess, setBuySuccess] = useState<string | null>(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -69,7 +92,7 @@ export default function RankingsPage() {
 
         const tableRows = fundamentalsList.map((fundamentals: StockFundamentals) => ({
           ticker: fundamentals.ticker,
-          valueScore: calculateValueScore(fundamentals),
+          valueScore: calculateValueScore(fundamentals).total,
           marketCap: fundamentals.marketCap,
           peTtm: fundamentals.peTtm,
           ps: fundamentals.ps,
@@ -100,6 +123,30 @@ export default function RankingsPage() {
       isMounted = false;
     };
   }, []);
+
+  const handleOpenBuy = (ticker: string, price: number) => {
+    setBuyModal({ ticker, price });
+    setBuyShares(1);
+    setBuySuccess(null);
+  };
+
+  const handleCloseBuy = () => {
+    setBuyModal(null);
+    setBuySuccess(null);
+  };
+
+  const handleConfirmBuy = async () => {
+    if (!buyModal) return;
+    setIsBuying(true);
+    try {
+      await postBuy(buyModal.ticker, buyShares, buyModal.price);
+      setBuySuccess(`Purchased ${buyShares} share${buyShares !== 1 ? 's' : ''} of ${buyModal.ticker} at ${currencyFormatter.format(buyModal.price)}.`);
+    } catch (err) {
+      setBuySuccess(`Error: ${err instanceof Error ? err.message : 'Could not save purchase.'}`);
+    } finally {
+      setIsBuying(false);
+    }
+  };
 
   const filteredRows = useMemo(() => {
     const normalizedQuery = query.trim().toUpperCase();
@@ -156,6 +203,7 @@ export default function RankingsPage() {
                   <th>Revenue YoY Growth</th>
                   <th>Operating Margin</th>
                   <th>Latest Price</th>
+                  <th></th>
                 </tr>
               </thead>
               <tbody>
@@ -169,6 +217,15 @@ export default function RankingsPage() {
                     <td>{row.revenueGrowthYoY === null ? '—' : `${row.revenueGrowthYoY.toFixed(1)}%`}</td>
                     <td>{row.operatingMargin === null ? '—' : `${row.operatingMargin.toFixed(1)}%`}</td>
                     <td>{currencyFormatter.format(row.latestPrice)}</td>
+                    <td>
+                      <button
+                        type="button"
+                        className="buyBtn"
+                        onClick={() => handleOpenBuy(row.ticker, row.latestPrice)}
+                      >
+                        Buy
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -176,6 +233,56 @@ export default function RankingsPage() {
           </div>
         ) : null}
       </section>
+
+      {buyModal ? (
+        <div className="modalOverlay" role="dialog" aria-modal="true" aria-label={`Buy ${buyModal.ticker}`}>
+          <div className="modal">
+            <h2>Buy {buyModal.ticker}</h2>
+            <p>Current price: <strong>{currencyFormatter.format(buyModal.price)}</strong></p>
+
+            <label style={{ display: 'block', marginTop: '1rem' }}>
+              <span style={{ color: '#5f6a80', fontSize: '0.9rem' }}>Number of shares</span>
+              <input
+                type="number"
+                min={1}
+                value={buyShares}
+                onChange={(e) => setBuyShares(Math.max(1, Number(e.target.value)))}
+                style={{ display: 'block', width: '100%', marginTop: '0.35rem', padding: '0.6rem 0.75rem', border: '1px solid #d4daea', borderRadius: '10px', fontSize: '1rem' }}
+              />
+            </label>
+
+            <p style={{ marginTop: '0.75rem', color: '#43506a' }}>
+              Total: <strong>{currencyFormatter.format(buyShares * buyModal.price)}</strong>
+            </p>
+
+            {buySuccess ? (
+              <p className="modalSuccess">{buySuccess}</p>
+            ) : null}
+
+            <div className="modalActions">
+              {!buySuccess ? (
+                <>
+                  <button
+                    type="button"
+                    className="confirmBtn"
+                    onClick={() => void handleConfirmBuy()}
+                    disabled={isBuying}
+                  >
+                    {isBuying ? 'Saving...' : 'Confirm Purchase'}
+                  </button>
+                  <button type="button" className="cancelBtn" onClick={handleCloseBuy}>
+                    Cancel
+                  </button>
+                </>
+              ) : (
+                <button type="button" className="cancelBtn" style={{ flex: 1 }} onClick={handleCloseBuy}>
+                  Close
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }

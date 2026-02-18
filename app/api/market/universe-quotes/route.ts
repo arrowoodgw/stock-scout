@@ -16,7 +16,7 @@ export async function GET(request: NextRequest) {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Could not load universe quotes.';
-    const status = message.includes('Missing ALPHAVANTAGE_API_KEY') ? 500 : 502;
+    const status = message.includes('Missing POLYGON_API_KEY') ? 500 : 502;
     return NextResponse.json({ error: message }, { status });
   }
 }
