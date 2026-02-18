@@ -1,7 +1,9 @@
 import { top50MarketCap } from '@/universe/top50MarketCap';
+import { readFileCache, writeFileCache } from './fileCache';
 
 const ALPHA_BASE = 'https://www.alphavantage.co/query';
 const QUOTE_TTL_MS = 10 * 60 * 1000;
+const UNIVERSE_CACHE_KEY = 'universe_quotes';
 
 type UniverseQuote = {
   price: number;
@@ -174,18 +176,32 @@ async function refreshQuotes() {
     expiresAt: Date.now() + QUOTE_TTL_MS
   };
 
+  // Persist to disk so the cache survives server restarts
+  await writeFileCache(UNIVERSE_CACHE_KEY, quotes, QUOTE_TTL_MS);
+
   return quotes;
 }
 
 export async function getUniverseQuotes(options?: { forceRefresh?: boolean }) {
   const forceRefresh = options?.forceRefresh ?? false;
 
-  if (!forceRefresh && cacheEntry && cacheEntry.expiresAt > Date.now()) {
-    return cacheEntry.quotes;
-  }
+  if (!forceRefresh) {
+    // 1. Check in-memory cache
+    if (cacheEntry && cacheEntry.expiresAt > Date.now()) {
+      return cacheEntry.quotes;
+    }
 
-  if (!forceRefresh && inFlightRefresh) {
-    return inFlightRefresh;
+    // 2. Deduplicate concurrent requests
+    if (inFlightRefresh) {
+      return inFlightRefresh;
+    }
+
+    // 3. Check file cache (survives process restarts)
+    const fromFile = await readFileCache<UniverseQuoteMap>(UNIVERSE_CACHE_KEY);
+    if (fromFile) {
+      cacheEntry = { quotes: fromFile, expiresAt: Date.now() + QUOTE_TTL_MS };
+      return fromFile;
+    }
   }
 
   inFlightRefresh = refreshQuotes();
