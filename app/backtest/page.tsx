@@ -5,7 +5,7 @@ import { ComparisonChart, ComparisonPoint } from '@/components/ComparisonChart';
 import { getFundamentalsDataProvider } from '@/providers';
 import { MockStockDataProvider } from '@/providers/mockStockDataProvider';
 import { calculateValueScore } from '@/scoring/calculateValueScore';
-import { defaultUniverse } from '@/universe/defaultUniverse';
+import { top50MarketCap } from '@/universe/top50MarketCap';
 
 const fundamentalsProvider = getFundamentalsDataProvider();
 const stockDataProvider = new MockStockDataProvider();
@@ -48,7 +48,7 @@ export default function BacktestPage() {
     setError(null);
 
     try {
-      const fundamentalsList = await Promise.all(defaultUniverse.map((ticker) => fundamentalsProvider.getFundamentals(ticker)));
+      const fundamentalsList = await Promise.all(top50MarketCap.tickers.map((ticker) => fundamentalsProvider.getFundamentals(ticker)));
 
       const selectedTickers = fundamentalsList
         .map((item) => ({ ticker: item.ticker, score: calculateValueScore(item) }))
@@ -116,7 +116,7 @@ export default function BacktestPage() {
       <section className="card wideCard">
         <header className="header">
           <h1>Backtest Lite</h1>
-          <p>Equal-weight buy-and-hold simulation of Top N Value Score picks vs SPY.</p>
+          <p>Equal-weight buy-and-hold simulation of Top N Value Score picks from the Top 50 market-cap universe vs SPY.</p>
         </header>
 
         <div className="toolbar">

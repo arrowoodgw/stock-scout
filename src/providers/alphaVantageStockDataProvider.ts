@@ -1,7 +1,8 @@
+import { top50MarketCap } from '@/universe/top50MarketCap';
 import { HistoricalPoint, PriceRange, RequestOptions, StockDataProvider, StockQuote } from './types';
 
 const API_BASE = 'https://www.alphavantage.co/query';
-const CACHE_TTL_MS = 12 * 60 * 1000;
+const HISTORY_TTL_MS = 12 * 60 * 60 * 1000;
 const RANGE_DAYS: Record<PriceRange, number> = {
   '1M': 21,
   '6M': 126,
@@ -15,14 +16,19 @@ type AlphaVantageResponse = {
   'Time Series (Daily)'?: Record<string, Record<string, string>>;
 };
 
-type CachedSeries = {
+type CachedHistory = {
   expiresAt: number;
-  quote: StockQuote;
   history: HistoricalPoint[];
 };
 
-const rangeCache = new Map<string, CachedSeries>();
-const inFlight = new Map<string, Promise<CachedSeries>>();
+type UniverseQuotesResponse = {
+  quotes: Record<string, { price: number; asOf: string }>;
+  error?: string;
+};
+
+const historyCache = new Map<string, CachedHistory>();
+const inFlightHistory = new Map<string, Promise<CachedHistory>>();
+const universeTickerSet = new Set<string>(top50MarketCap.tickers);
 
 function isBrowser() {
   return typeof window !== 'undefined';
@@ -74,23 +80,8 @@ function parseSeries(series: Record<string, Record<string, string>>): Historical
     .sort((a, b) => a.date.localeCompare(b.date));
 }
 
-function buildCachedSeries(ticker: string, points: HistoricalPoint[], range: PriceRange): CachedSeries {
-  const history = points.slice(-RANGE_DAYS[range]);
-  const latest = points[points.length - 1];
-
-  if (!latest) {
-    throw new Error('No historical data returned for ticker.');
-  }
-
-  return {
-    expiresAt: Date.now() + CACHE_TTL_MS,
-    quote: {
-      ticker,
-      price: latest.price,
-      updatedAt: latest.date
-    },
-    history
-  };
+function sliceRange(points: HistoricalPoint[], range: PriceRange): HistoricalPoint[] {
+  return points.slice(-RANGE_DAYS[range]);
 }
 
 async function fetchAlphaVantageSeries(ticker: string): Promise<Record<string, Record<string, string>>> {
@@ -139,40 +130,19 @@ async function fetchJson<T>(path: string): Promise<T> {
 }
 
 export class AlphaVantageStockDataProvider implements StockDataProvider {
-  private async loadSeriesRange(tickerInput: string, range: PriceRange, options?: RequestOptions): Promise<CachedSeries> {
+  private async loadFullHistory(tickerInput: string, options?: RequestOptions): Promise<HistoricalPoint[]> {
     const ticker = normalizeTicker(tickerInput);
-
-    if (isBrowser()) {
-      const params = new URLSearchParams({ ticker, range });
-
-      if (options?.forceRefresh) {
-        params.set('refresh', '1');
-      }
-
-      const [history, quote] = await Promise.all([
-        fetchJson<HistoricalPoint[]>(`/api/market/history?${params.toString()}`),
-        fetchJson<StockQuote>(`/api/market/quote?ticker=${encodeURIComponent(ticker)}${options?.forceRefresh ? '&refresh=1' : ''}`)
-      ]);
-
-      return {
-        expiresAt: Date.now() + CACHE_TTL_MS,
-        history,
-        quote
-      };
-    }
-
-    const cacheKey = `${ticker}:${range}`;
     const now = Date.now();
 
     if (!options?.forceRefresh) {
-      const cached = rangeCache.get(cacheKey);
+      const cached = historyCache.get(ticker);
       if (cached && cached.expiresAt > now) {
-        return cached;
+        return cached.history;
       }
 
-      const activeRequest = inFlight.get(cacheKey);
+      const activeRequest = inFlightHistory.get(ticker);
       if (activeRequest) {
-        return activeRequest;
+        return (await activeRequest).history;
       }
     }
 
@@ -184,27 +154,67 @@ export class AlphaVantageStockDataProvider implements StockDataProvider {
         throw new Error('No valid historical price points returned by Alpha Vantage.');
       }
 
-      const next = buildCachedSeries(ticker, parsed, range);
-      rangeCache.set(cacheKey, next);
+      const next = {
+        expiresAt: Date.now() + HISTORY_TTL_MS,
+        history: parsed
+      };
+
+      historyCache.set(ticker, next);
       return next;
     })();
 
-    inFlight.set(cacheKey, request);
+    inFlightHistory.set(ticker, request);
 
     try {
-      return await request;
+      return (await request).history;
     } finally {
-      inFlight.delete(cacheKey);
+      inFlightHistory.delete(ticker);
     }
   }
 
-  async getLatestQuote(ticker: string, options?: RequestOptions): Promise<StockQuote> {
-    const data = await this.loadSeriesRange(ticker, '1Y', options);
-    return data.quote;
+  async getLatestQuote(tickerInput: string, options?: RequestOptions): Promise<StockQuote> {
+    const ticker = normalizeTicker(tickerInput);
+
+    if (isBrowser() && universeTickerSet.has(ticker)) {
+      const payload = await fetchJson<UniverseQuotesResponse>(
+        `/api/market/universe-quotes${options?.forceRefresh ? '?refresh=1' : ''}`
+      );
+
+      const universeQuote = payload.quotes[ticker];
+      if (universeQuote) {
+        return {
+          ticker,
+          price: universeQuote.price,
+          updatedAt: universeQuote.asOf
+        };
+      }
+    }
+
+    const history = await this.loadFullHistory(ticker, options);
+    const latest = history[history.length - 1];
+
+    if (!latest) {
+      throw new Error('No historical data returned for ticker.');
+    }
+
+    return {
+      ticker,
+      price: latest.price,
+      updatedAt: latest.date
+    };
   }
 
   async getHistoricalPrices(ticker: string, range: PriceRange, options?: RequestOptions): Promise<HistoricalPoint[]> {
-    const data = await this.loadSeriesRange(ticker, range, options);
-    return data.history;
+    if (isBrowser()) {
+      const params = new URLSearchParams({ ticker: ticker.toUpperCase(), range });
+      if (options?.forceRefresh) {
+        params.set('refresh', '1');
+      }
+
+      return fetchJson<HistoricalPoint[]>(`/api/market/history?${params.toString()}`);
+    }
+
+    const fullHistory = await this.loadFullHistory(ticker, options);
+    return sliceRange(fullHistory, range);
   }
 }

@@ -2,14 +2,22 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { getFundamentalsDataProvider } from '@/providers';
-import { MockStockDataProvider } from '@/providers/mockStockDataProvider';
 import { StockFundamentals } from '@/providers/types';
 import { calculateValueScore } from '@/scoring/calculateValueScore';
-import { defaultUniverse } from '@/universe/defaultUniverse';
+import { top50MarketCap } from '@/universe/top50MarketCap';
 import { currencyFormatter, formatLargeCurrency, numberFormatter } from '@/utils/formatters';
 
 const fundamentalsProvider = getFundamentalsDataProvider();
-const stockDataProvider = new MockStockDataProvider();
+
+type UniverseQuote = {
+  price: number;
+  asOf: string;
+  source: string;
+};
+
+type UniverseQuotesResponse = {
+  quotes: Record<string, UniverseQuote>;
+};
 
 type Row = {
   ticker: string;
@@ -23,6 +31,17 @@ type Row = {
 };
 
 type SortField = 'valueScore' | 'marketCap';
+
+async function fetchUniverseQuotes() {
+  const response = await fetch('/api/market/universe-quotes', { cache: 'no-store' });
+  const payload = (await response.json()) as UniverseQuotesResponse & { error?: string };
+
+  if (!response.ok) {
+    throw new Error(payload.error ?? 'Could not load universe quotes.');
+  }
+
+  return payload;
+}
 
 export default function RankingsPage() {
   const [rows, setRows] = useState<Row[]>([]);
@@ -39,16 +58,15 @@ export default function RankingsPage() {
       setError(null);
 
       try {
-        const [fundamentalsList, quotes] = await Promise.all([
-          Promise.all(defaultUniverse.map((ticker) => fundamentalsProvider.getFundamentals(ticker))),
-          Promise.all(defaultUniverse.map((ticker) => stockDataProvider.getLatestQuote(ticker)))
+        const [fundamentalsList, universeQuotes] = await Promise.all([
+          Promise.all(top50MarketCap.tickers.map((ticker) => fundamentalsProvider.getFundamentals(ticker))),
+          fetchUniverseQuotes()
         ]);
 
         if (!isMounted) {
           return;
         }
 
-        const quoteByTicker = Object.fromEntries(quotes.map((quote) => [quote.ticker, quote.price]));
         const tableRows = fundamentalsList.map((fundamentals: StockFundamentals) => ({
           ticker: fundamentals.ticker,
           valueScore: calculateValueScore(fundamentals),
@@ -57,7 +75,7 @@ export default function RankingsPage() {
           ps: fundamentals.ps,
           revenueGrowthYoY: fundamentals.revenueGrowthYoY,
           operatingMargin: fundamentals.operatingMargin,
-          latestPrice: quoteByTicker[fundamentals.ticker] ?? 0
+          latestPrice: universeQuotes.quotes[fundamentals.ticker]?.price ?? 0
         }));
 
         setRows(tableRows);
@@ -101,7 +119,7 @@ export default function RankingsPage() {
       <section className="card wideCard">
         <header className="header">
           <h1>Rankings</h1>
-          <p>Universe-wide ranking by deterministic Value Score.</p>
+          <p>Top 50 market-cap universe ranking by deterministic Value Score.</p>
         </header>
 
         <div className="toolbar">

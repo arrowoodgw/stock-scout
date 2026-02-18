@@ -1,20 +1,56 @@
 'use client';
 
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { FundamentalsPanel } from '@/components/FundamentalsPanel';
 import { HistoricalChart } from '@/components/HistoricalChart';
 import { PriceCard } from '@/components/PriceCard';
 import { getFundamentalsDataProvider, getStockDataProvider } from '@/providers';
 import { HistoricalPoint, PriceRange, StockFundamentals, StockQuote } from '@/providers/types';
+import { PortfolioTrade } from '@/portfolio/types';
+import { calculateValueScore } from '@/scoring/calculateValueScore';
 
 const stockDataProvider = getStockDataProvider();
 const fundamentalsProvider = getFundamentalsDataProvider();
 const ranges: PriceRange[] = ['1M', '6M', '1Y'];
 
+const LOCAL_STORAGE_KEY = 'stock-scout-portfolio-trades';
+
 type TickerDetailViewProps = {
   initialTicker?: string;
 };
+
+function quoteFromHistory(ticker: string, points: HistoricalPoint[]): StockQuote {
+  const latest = points[points.length - 1];
+
+  if (!latest) {
+    throw new Error('No historical points available for ticker.');
+  }
+
+  return {
+    ticker,
+    price: latest.price,
+    updatedAt: latest.date
+  };
+}
+
+async function saveTrade(trade: PortfolioTrade) {
+  const response = await fetch('/api/portfolio/trades', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ trade })
+  });
+
+  if (response.ok) {
+    return 'filesystem';
+  }
+
+  const existingRaw = window.localStorage.getItem(LOCAL_STORAGE_KEY);
+  const existing = existingRaw ? ((JSON.parse(existingRaw) as PortfolioTrade[]) ?? []) : [];
+  existing.push(trade);
+  window.localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(existing));
+  return 'localStorage';
+}
 
 export function TickerDetailView({ initialTicker = 'AAPL' }: TickerDetailViewProps) {
   const router = useRouter();
@@ -32,6 +68,7 @@ export function TickerDetailView({ initialTicker = 'AAPL' }: TickerDetailViewPro
   const [fundamentalsError, setFundamentalsError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<string | null>(null);
+  const [buyStatus, setBuyStatus] = useState<string | null>(null);
 
   useEffect(() => {
     setInputTicker(normalizedInitial);
@@ -47,17 +84,14 @@ export function TickerDetailView({ initialTicker = 'AAPL' }: TickerDetailViewPro
 
       try {
         const forceRefresh = refreshKey > 0;
-        const [nextQuote, nextHistory] = await Promise.all([
-          stockDataProvider.getLatestQuote(activeTicker, { forceRefresh }),
-          stockDataProvider.getHistoricalPrices(activeTicker, selectedRange, { forceRefresh })
-        ]);
+        const nextHistory = await stockDataProvider.getHistoricalPrices(activeTicker, selectedRange, { forceRefresh });
 
         if (!isMounted) {
           return;
         }
 
-        setQuote(nextQuote);
         setHistory(nextHistory);
+        setQuote(quoteFromHistory(activeTicker, nextHistory));
       } catch (loadError) {
         if (!isMounted) {
           return;
@@ -132,8 +166,39 @@ export function TickerDetailView({ initialTicker = 'AAPL' }: TickerDetailViewPro
       return;
     }
 
+    setBuyStatus(null);
     setActiveTicker(nextTicker);
     router.push(`/ticker?ticker=${encodeURIComponent(nextTicker)}`);
+  };
+
+  const valueScore = useMemo(() => {
+    if (!fundamentals) {
+      return null;
+    }
+
+    return calculateValueScore(fundamentals);
+  }, [fundamentals]);
+
+  const handleBuy = async () => {
+    if (!quote) {
+      return;
+    }
+
+    try {
+      const trade: PortfolioTrade = {
+        ticker: quote.ticker,
+        shares: 1,
+        priceAtBuy: quote.price,
+        date: new Date().toISOString(),
+        valueScoreAtBuy: valueScore
+      };
+
+      const storage = await saveTrade(trade);
+      setBuyStatus(storage === 'filesystem' ? 'Saved trade to /data/portfolio.json.' : 'Filesystem unavailable. Saved trade to localStorage.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not save trade.';
+      setBuyStatus(message);
+    }
   };
 
   return (
@@ -182,6 +247,12 @@ export function TickerDetailView({ initialTicker = 'AAPL' }: TickerDetailViewPro
       {!isPriceLoading && !priceError && quote ? (
         <>
           <PriceCard quote={quote} />
+          <div className="actionRow">
+            <button type="button" onClick={() => void handleBuy()}>
+              Buy
+            </button>
+            {buyStatus ? <p className="status">{buyStatus}</p> : null}
+          </div>
           <HistoricalChart data={history} ticker={quote.ticker} range={selectedRange} />
         </>
       ) : null}
