@@ -1,9 +1,8 @@
 import { HistoricalPoint, PriceRange, RequestOptions, StockDataProvider, StockQuote } from './types';
+import { polygonRateLimitedFetch } from '@/server/polygonRateLimit';
 
 const HISTORY_TTL_MS = 12 * 60 * 60 * 1000;
 const QUOTE_TTL_MS = 5 * 60 * 1000;
-// Polygon free tier: 5 requests per minute → enforce at least 12 s between requests
-const MIN_REQUEST_INTERVAL_MS = 12 * 1000;
 
 type PolygonAggResult = {
   c: number;  // close price
@@ -31,8 +30,6 @@ const historyCache = new Map<string, CachedHistory>();
 const inFlightHistory = new Map<string, Promise<CachedHistory>>();
 const quoteCache = new Map<string, CachedQuote>();
 const inFlightQuote = new Map<string, Promise<StockQuote>>();
-
-let lastRequestAt = 0;
 
 function isBrowser() {
   return typeof window !== 'undefined';
@@ -70,21 +67,11 @@ function rangeToFromDate(range: PriceRange): string {
   return formatDate(now);
 }
 
-async function rateLimitedFetch(url: string): Promise<Response> {
-  const now = Date.now();
-  const elapsed = now - lastRequestAt;
-  if (elapsed < MIN_REQUEST_INTERVAL_MS) {
-    await new Promise((resolve) => setTimeout(resolve, MIN_REQUEST_INTERVAL_MS - elapsed));
-  }
-  lastRequestAt = Date.now();
-  return fetch(url, { method: 'GET', cache: 'no-store' });
-}
-
 async function fetchPolygonHistory(ticker: string, from: string, to: string): Promise<HistoricalPoint[]> {
   const apiKey = getApiKey();
   const url = `https://api.polygon.io/v2/aggs/ticker/${encodeURIComponent(ticker)}/range/1/day/${from}/${to}?adjusted=true&sort=asc&apiKey=${apiKey}`;
 
-  const response = await rateLimitedFetch(url);
+  const response = await polygonRateLimitedFetch(url);
 
   if (!response.ok) {
     throw new Error(`Polygon request failed (${response.status}).`);
@@ -112,7 +99,7 @@ async function fetchPolygonPrev(ticker: string): Promise<number> {
   const apiKey = getApiKey();
   const url = `https://api.polygon.io/v2/aggs/ticker/${encodeURIComponent(ticker)}/prev?apiKey=${apiKey}`;
 
-  const response = await rateLimitedFetch(url);
+  const response = await polygonRateLimitedFetch(url);
 
   if (!response.ok) {
     throw new Error(`Polygon prev request failed (${response.status}).`);

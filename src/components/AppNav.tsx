@@ -7,7 +7,6 @@ const links = [
   { href: '/', label: 'Home' },
   { href: '/ticker', label: 'Ticker Detail' },
   { href: '/rankings', label: 'Rankings' },
-  { href: '/backtest', label: 'Backtest Lite' },
   { href: '/portfolio', label: 'Portfolio' }
 ];
 

@@ -7,14 +7,11 @@ import { HistoricalChart } from '@/components/HistoricalChart';
 import { PriceCard } from '@/components/PriceCard';
 import { getFundamentalsDataProvider, getStockDataProvider } from '@/providers';
 import { HistoricalPoint, PriceRange, StockFundamentals, StockQuote } from '@/providers/types';
-import { PortfolioTrade } from '@/portfolio/types';
 import { calculateValueScore, ValueScoreResult } from '@/scoring/calculateValueScore';
 
 const stockDataProvider = getStockDataProvider();
 const fundamentalsProvider = getFundamentalsDataProvider();
 const ranges: PriceRange[] = ['1M', '6M', '1Y'];
-
-const LOCAL_STORAGE_KEY = 'stock-scout-portfolio-trades';
 
 type TickerDetailViewProps = {
   initialTicker?: string;
@@ -34,22 +31,17 @@ function quoteFromHistory(ticker: string, points: HistoricalPoint[]): StockQuote
   };
 }
 
-async function saveTrade(trade: PortfolioTrade) {
-  const response = await fetch('/api/portfolio/trades', {
+async function postBuy(ticker: string, shares: number, purchasePrice: number): Promise<void> {
+  const response = await fetch('/api/portfolio/buy', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ trade })
+    body: JSON.stringify({ ticker, shares, purchasePrice })
   });
 
-  if (response.ok) {
-    return 'filesystem';
+  if (!response.ok) {
+    const payload = (await response.json()) as { error?: string };
+    throw new Error(payload.error ?? 'Could not save purchase.');
   }
-
-  const existingRaw = window.localStorage.getItem(LOCAL_STORAGE_KEY);
-  const existing = existingRaw ? ((JSON.parse(existingRaw) as PortfolioTrade[]) ?? []) : [];
-  existing.push(trade);
-  window.localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(existing));
-  return 'localStorage';
 }
 
 export function TickerDetailView({ initialTicker = 'AAPL' }: TickerDetailViewProps) {
@@ -68,7 +60,12 @@ export function TickerDetailView({ initialTicker = 'AAPL' }: TickerDetailViewPro
   const [fundamentalsError, setFundamentalsError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<string | null>(null);
-  const [buyStatus, setBuyStatus] = useState<string | null>(null);
+
+  // Buy modal state
+  const [buyModalOpen, setBuyModalOpen] = useState(false);
+  const [buyShares, setBuyShares] = useState(1);
+  const [isBuying, setIsBuying] = useState(false);
+  const [buySuccess, setBuySuccess] = useState<string | null>(null);
 
   useEffect(() => {
     setInputTicker(normalizedInitial);
@@ -166,7 +163,8 @@ export function TickerDetailView({ initialTicker = 'AAPL' }: TickerDetailViewPro
       return;
     }
 
-    setBuyStatus(null);
+    setBuyModalOpen(false);
+    setBuySuccess(null);
     setActiveTicker(nextTicker);
     router.push(`/ticker?ticker=${encodeURIComponent(nextTicker)}`);
   };
@@ -179,25 +177,29 @@ export function TickerDetailView({ initialTicker = 'AAPL' }: TickerDetailViewPro
     return calculateValueScore(fundamentals);
   }, [fundamentals]);
 
-  const handleBuy = async () => {
-    if (!quote) {
-      return;
-    }
+  const handleOpenBuy = () => {
+    setBuyShares(1);
+    setBuySuccess(null);
+    setBuyModalOpen(true);
+  };
 
+  const handleCloseBuy = () => {
+    setBuyModalOpen(false);
+    setBuySuccess(null);
+  };
+
+  const handleConfirmBuy = async () => {
+    if (!quote) return;
+    setIsBuying(true);
     try {
-      const trade: PortfolioTrade = {
-        ticker: quote.ticker,
-        shares: 1,
-        priceAtBuy: quote.price,
-        date: new Date().toISOString(),
-        valueScoreAtBuy: valueScore?.total ?? null
-      };
-
-      const storage = await saveTrade(trade);
-      setBuyStatus(storage === 'filesystem' ? 'Saved trade to /data/portfolio.json.' : 'Filesystem unavailable. Saved trade to localStorage.');
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Could not save trade.';
-      setBuyStatus(message);
+      await postBuy(quote.ticker, buyShares, quote.price);
+      setBuySuccess(
+        `Purchased ${buyShares} share${buyShares !== 1 ? 's' : ''} of ${quote.ticker} at $${quote.price.toFixed(2)}.`
+      );
+    } catch (err) {
+      setBuySuccess(`Error: ${err instanceof Error ? err.message : 'Could not save purchase.'}`);
+    } finally {
+      setIsBuying(false);
     }
   };
 
@@ -248,10 +250,9 @@ export function TickerDetailView({ initialTicker = 'AAPL' }: TickerDetailViewPro
         <>
           <PriceCard quote={quote} />
           <div className="actionRow">
-            <button type="button" onClick={() => void handleBuy()}>
+            <button type="button" onClick={handleOpenBuy}>
               Buy
             </button>
-            {buyStatus ? <p className="status">{buyStatus}</p> : null}
           </div>
           <HistoricalChart data={history} ticker={quote.ticker} range={selectedRange} />
         </>
@@ -261,6 +262,56 @@ export function TickerDetailView({ initialTicker = 'AAPL' }: TickerDetailViewPro
       {!isFundamentalsLoading && fundamentalsError ? <p className="status error">{fundamentalsError}</p> : null}
       {!isFundamentalsLoading && !fundamentalsError && fundamentals ? (
         <FundamentalsPanel fundamentals={fundamentals} scoreBreakdown={valueScore?.breakdown ?? null} />
+      ) : null}
+
+      {buyModalOpen && quote ? (
+        <div className="modalOverlay" role="dialog" aria-modal="true" aria-label={`Buy ${quote.ticker}`}>
+          <div className="modal">
+            <h2>Buy {quote.ticker}</h2>
+            <p>Current price: <strong>${quote.price.toFixed(2)}</strong></p>
+
+            <label style={{ display: 'block', marginTop: '1rem' }}>
+              <span style={{ color: '#5f6a80', fontSize: '0.9rem' }}>Number of shares</span>
+              <input
+                type="number"
+                min={1}
+                value={buyShares}
+                onChange={(e) => setBuyShares(Math.max(1, Number(e.target.value)))}
+                style={{ display: 'block', width: '100%', marginTop: '0.35rem', padding: '0.6rem 0.75rem', border: '1px solid #d4daea', borderRadius: '10px', fontSize: '1rem' }}
+              />
+            </label>
+
+            <p style={{ marginTop: '0.75rem', color: '#43506a' }}>
+              Total: <strong>${(buyShares * quote.price).toFixed(2)}</strong>
+            </p>
+
+            {buySuccess ? (
+              <p className="modalSuccess">{buySuccess}</p>
+            ) : null}
+
+            <div className="modalActions">
+              {!buySuccess ? (
+                <>
+                  <button
+                    type="button"
+                    className="confirmBtn"
+                    onClick={() => void handleConfirmBuy()}
+                    disabled={isBuying}
+                  >
+                    {isBuying ? 'Saving...' : 'Confirm Purchase'}
+                  </button>
+                  <button type="button" className="cancelBtn" onClick={handleCloseBuy}>
+                    Cancel
+                  </button>
+                </>
+              ) : (
+                <button type="button" className="cancelBtn" style={{ flex: 1 }} onClick={handleCloseBuy}>
+                  Close
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
       ) : null}
     </section>
   );
