@@ -134,51 +134,6 @@ type UniverseQuotesResponse = {
 };
 
 export class PolygonStockDataProvider implements StockDataProvider {
-  private async loadFullHistory(tickerInput: string, options?: RequestOptions): Promise<HistoricalPoint[]> {
-    const ticker = normalizeTicker(tickerInput);
-    const now = Date.now();
-
-    if (!options?.forceRefresh) {
-      const cached = historyCache.get(ticker);
-      if (cached && cached.expiresAt > now) {
-        return cached.history;
-      }
-
-      const activeRequest = inFlightHistory.get(ticker);
-      if (activeRequest) {
-        return (await activeRequest).history;
-      }
-    }
-
-    const request = (async () => {
-      // Fetch ~1 year of history; range slicing is done in memory
-      const to = formatDate(new Date());
-      const from = rangeToFromDate('1Y');
-
-      const history = await fetchPolygonHistory(ticker, from, to);
-
-      if (history.length === 0) {
-        throw new Error('No valid historical price points returned by Polygon.');
-      }
-
-      const next: CachedHistory = {
-        expiresAt: Date.now() + HISTORY_TTL_MS,
-        history
-      };
-
-      historyCache.set(ticker, next);
-      return next;
-    })();
-
-    inFlightHistory.set(ticker, request);
-
-    try {
-      return (await request).history;
-    } finally {
-      inFlightHistory.delete(ticker);
-    }
-  }
-
   async getLatestQuote(tickerInput: string, options?: RequestOptions): Promise<StockQuote> {
     const ticker = normalizeTicker(tickerInput);
 
