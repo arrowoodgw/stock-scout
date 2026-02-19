@@ -1,6 +1,30 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   Stock Scout — Dark Theme (Bloomberg / Yahoo Finance aesthetic)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
 :root {
-  color-scheme: light;
+  color-scheme: dark;
   font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+
+  --bg:             #0a0a0a;
+  --surface:        #1a1a1a;
+  --surface-alt:    #141414;
+  --border:         #2a2a2a;
+  --border-subtle:  #222222;
+
+  --text-primary:   #e5e5e5;
+  --text-secondary: #888888;
+  --text-muted:     #666666;
+
+  --accent:         #2962ff;
+  --accent-hover:   #1e50d8;
+  --accent-bg:      rgba(41, 98, 255, 0.12);
+
+  --positive:       #22c55e;
+  --negative:       #ef4444;
+
+  --row-even:       #141414;
+  --row-odd:        #1a1a1a;
 }
 
 * {
@@ -9,9 +33,11 @@
 
 body {
   margin: 0;
-  background: #f5f7fb;
-  color: #1d2433;
+  background: var(--bg);
+  color: var(--text-primary);
 }
+
+/* ── Navigation ─────────────────────────────────────────────────────────── */
 
 .appNav {
   position: sticky;
@@ -21,23 +47,30 @@ body {
   gap: 0.75rem;
   align-items: center;
   padding: 0.85rem 1rem;
-  border-bottom: 1px solid #e3e8f7;
-  background: rgba(255, 255, 255, 0.95);
-  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--border);
+  background: rgba(10, 10, 10, 0.92);
+  backdrop-filter: blur(12px);
 }
 
 .appNav a {
   text-decoration: none;
-  color: #274170;
+  color: var(--text-secondary);
   font-weight: 600;
   padding: 0.4rem 0.65rem;
-  border-radius: 9px;
+  border-radius: 6px;
+  transition: color 0.15s, background 0.15s;
+}
+
+.appNav a:hover {
+  color: var(--text-primary);
 }
 
 .appNav a.active {
-  background: #dce8ff;
-  color: #102859;
+  background: var(--accent-bg);
+  color: var(--accent);
 }
+
+/* ── Page layout ────────────────────────────────────────────────────────── */
 
 .page {
   min-height: calc(100vh - 58px);
@@ -49,25 +82,30 @@ body {
 
 .card {
   width: min(760px, 100%);
-  background: white;
-  border-radius: 16px;
-  box-shadow: 0 10px 30px rgba(26, 39, 68, 0.08);
+  background: var(--surface);
+  border-radius: 12px;
+  border: 1px solid var(--border);
   padding: 1.5rem;
 }
 
 .wideCard {
-  width: min(1040px, 100%);
+  width: min(1120px, 100%);
 }
+
+/* ── Header ─────────────────────────────────────────────────────────────── */
 
 .header h1 {
   margin: 0;
   font-size: 1.6rem;
+  color: var(--text-primary);
 }
 
 .header p {
   margin: 0.4rem 0 1.2rem;
-  color: #5b6474;
+  color: var(--text-secondary);
 }
+
+/* ── Search form ────────────────────────────────────────────────────────── */
 
 .searchForm {
   display: flex;
@@ -77,10 +115,17 @@ body {
 .searchForm input,
 .toolbar input,
 .toolbar select {
-  border: 1px solid #d4daea;
-  border-radius: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
   padding: 0.7rem 0.8rem;
   font-size: 1rem;
+  background: var(--surface-alt);
+  color: var(--text-primary);
+}
+
+.searchForm input::placeholder,
+.toolbar input::placeholder {
+  color: var(--text-muted);
 }
 
 .searchForm input {
@@ -90,24 +135,38 @@ body {
 .searchForm button,
 .rangeButtons button {
   border: none;
-  border-radius: 10px;
+  border-radius: 8px;
   cursor: pointer;
 }
 
 .searchForm button {
-  background: #1d4ed8;
-  color: white;
+  background: var(--accent);
+  color: #ffffff;
   padding: 0.7rem 1rem;
   font-weight: 600;
+  transition: background 0.15s;
+}
+
+.searchForm button:hover {
+  background: var(--accent-hover);
 }
 
 .refreshButton {
-  background: #e9eefc;
-  color: #193069;
+  background: var(--accent-bg);
+  color: var(--accent);
   padding: 0.7rem 1rem;
   font-weight: 600;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s;
 }
 
+.refreshButton:hover {
+  background: rgba(41, 98, 255, 0.2);
+}
+
+/* ── Range buttons ──────────────────────────────────────────────────────── */
 
 .rangeButtons {
   display: flex;
@@ -117,42 +176,57 @@ body {
 
 .rangeButtons button {
   padding: 0.45rem 0.8rem;
-  background: #e9eefc;
-  color: #193069;
+  background: var(--surface-alt);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  transition: background 0.15s, color 0.15s;
+}
+
+.rangeButtons button:hover {
+  color: var(--text-primary);
 }
 
 .rangeButtons .selected {
-  background: #d8e3ff;
+  background: var(--accent-bg);
+  color: var(--accent);
+  border-color: var(--accent);
   font-weight: 700;
 }
 
+/* ── Status messages ────────────────────────────────────────────────────── */
+
 .status {
   margin: 1rem 0 0;
-  color: #43506a;
+  color: var(--text-secondary);
 }
 
 .status.error {
-  color: #b42318;
+  color: var(--negative);
 }
+
+/* ── Price card ─────────────────────────────────────────────────────────── */
 
 .priceCard {
   margin-top: 1.2rem;
   padding: 1rem;
-  border: 1px solid #e4e9f6;
-  border-radius: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-alt);
 }
 
 .priceLine {
   margin: 0.25rem 0 0;
   font-size: 1.6rem;
   font-weight: 700;
+  color: var(--text-primary);
 }
 
 .subtle {
-  color: #5f6a80;
+  color: var(--text-secondary);
   margin: 0;
 }
 
+/* ── Action row ─────────────────────────────────────────────────────────── */
 
 .actionRow {
   display: flex;
@@ -163,23 +237,32 @@ body {
 
 .actionRow button {
   border: none;
-  border-radius: 10px;
-  background: #1d4ed8;
-  color: white;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #ffffff;
   padding: 0.55rem 0.9rem;
   font-weight: 600;
   cursor: pointer;
+  transition: background 0.15s;
 }
+
+.actionRow button:hover {
+  background: var(--accent-hover);
+}
+
+/* ── Chart ──────────────────────────────────────────────────────────────── */
 
 .chartWrap {
   margin-top: 1rem;
-  border: 1px solid #e4e9f6;
-  border-radius: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
   padding: 0.75rem;
+  background: var(--surface-alt);
 }
 
 .chartTitle {
   margin: 0 0 0.5rem;
+  color: var(--text-primary);
 }
 
 .chart {
@@ -195,7 +278,7 @@ body {
 }
 
 .chartLegend .portfolio {
-  color: #1d4ed8;
+  color: var(--accent);
   font-weight: 600;
 }
 
@@ -209,14 +292,17 @@ body {
   justify-content: space-between;
   margin-top: 0.5rem;
   font-size: 0.85rem;
-  color: #5f6a80;
+  color: var(--text-secondary);
 }
+
+/* ── Fundamentals panel ─────────────────────────────────────────────────── */
 
 .fundamentalsPanel {
   margin-top: 1rem;
-  border: 1px solid #e4e9f6;
-  border-radius: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
   padding: 1rem;
+  background: var(--surface-alt);
 }
 
 .fundamentalsHeader {
@@ -230,6 +316,7 @@ body {
 .fundamentalsHeader h2 {
   margin: 0;
   font-size: 1.15rem;
+  color: var(--text-primary);
 }
 
 .fundamentalsGrid {
@@ -242,7 +329,7 @@ body {
   display: flex;
   justify-content: space-between;
   gap: 1rem;
-  border-bottom: 1px solid #eef2fd;
+  border-bottom: 1px solid var(--border-subtle);
   padding-bottom: 0.4rem;
 }
 
@@ -252,31 +339,35 @@ body {
 }
 
 .fundamentalRow dt {
-  color: #5f6a80;
+  color: var(--text-secondary);
 }
 
 .fundamentalRow dd {
   margin: 0;
   font-weight: 600;
+  color: var(--text-primary);
 }
+
+/* ── Value score box ────────────────────────────────────────────────────── */
 
 .valueScoreBox {
   margin-top: 1rem;
   padding: 0.75rem;
-  border-radius: 10px;
-  background: #f2f6ff;
+  border-radius: 8px;
+  background: var(--accent-bg);
+  border: 1px solid var(--border);
 }
 
 .valueScore {
   margin: 0.2rem 0;
   font-size: 1.35rem;
   font-weight: 700;
-  color: #193069;
+  color: var(--accent);
 }
 
 .scoreExplanation {
   margin: 0.5rem 0 0;
-  color: #4a5c7d;
+  color: var(--text-secondary);
   font-size: 0.9rem;
 }
 
@@ -295,19 +386,21 @@ body {
 }
 
 .scoreBreakdownRow dt {
-  color: #5f6a80;
+  color: var(--text-secondary);
 }
 
 .scoreBreakdownRow dd {
   margin: 0;
   font-weight: 600;
-  color: #193069;
+  color: var(--text-primary);
 }
+
+/* ── Modal ──────────────────────────────────────────────────────────────── */
 
 .modalOverlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.45);
+  background: rgba(0, 0, 0, 0.7);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -315,20 +408,44 @@ body {
 }
 
 .modal {
-  background: white;
-  border-radius: 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
   padding: 1.5rem;
   width: min(420px, 90vw);
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
 }
 
 .modal h2 {
   margin: 0 0 0.5rem;
+  color: var(--text-primary);
 }
 
 .modal p {
   margin: 0.25rem 0;
-  color: #43506a;
+  color: var(--text-secondary);
+}
+
+.modalInput {
+  display: block;
+  width: 100%;
+  margin-top: 0.35rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 1rem;
+  background: var(--surface-alt);
+  color: var(--text-primary);
+}
+
+.labelText {
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+}
+
+.modalTotal {
+  margin-top: 0.75rem;
+  color: var(--text-secondary);
 }
 
 .modalActions {
@@ -340,60 +457,80 @@ body {
 .modalActions button {
   flex: 1;
   border: none;
-  border-radius: 10px;
+  border-radius: 8px;
   padding: 0.7rem 1rem;
   font-weight: 600;
   cursor: pointer;
+  transition: background 0.15s;
 }
 
 .modalActions .confirmBtn {
-  background: #1d4ed8;
-  color: white;
+  background: var(--accent);
+  color: #ffffff;
+}
+
+.modalActions .confirmBtn:hover {
+  background: var(--accent-hover);
 }
 
 .modalActions .confirmBtn:disabled {
-  opacity: 0.6;
+  opacity: 0.5;
   cursor: not-allowed;
 }
 
 .modalActions .cancelBtn {
-  background: #e9eefc;
-  color: #193069;
+  background: var(--surface-alt);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+
+.modalActions .cancelBtn:hover {
+  color: var(--text-primary);
 }
 
 .modalSuccess {
   margin-top: 0.75rem;
-  color: #15803d;
+  color: var(--positive);
   font-weight: 600;
 }
 
+/* ── Buy button (inline) ────────────────────────────────────────────────── */
+
 .buyBtn {
   border: none;
-  border-radius: 8px;
-  background: #1d4ed8;
-  color: white;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #ffffff;
   padding: 0.35rem 0.7rem;
   font-weight: 600;
   cursor: pointer;
   font-size: 0.85rem;
+  transition: background 0.15s;
 }
 
-.topPicksList {
-  margin: 1rem 0 0;
-  padding: 0;
-  list-style: none;
+.buyBtn:hover {
+  background: var(--accent-hover);
 }
 
-.topPicksList li {
-  display: flex;
-  justify-content: space-between;
-  padding: 0.75rem 0.4rem;
-  border-bottom: 1px solid #edf1fb;
+/* ── Remove button (inline) ─────────────────────────────────────────────── */
+
+.removeBtn {
+  border: none;
+  border-radius: 6px;
+  background: rgba(239, 68, 68, 0.15);
+  color: var(--negative);
+  padding: 0.35rem 0.7rem;
+  font-weight: 600;
+  cursor: pointer;
+  font-size: 0.85rem;
+  transition: background 0.15s;
 }
 
-.topPicksList li strong {
-  color: #1d4ed8;
+.removeBtn:hover {
+  background: rgba(239, 68, 68, 0.3);
 }
+
+/* ── Toolbar ────────────────────────────────────────────────────────────── */
 
 .toolbar {
   display: flex;
@@ -406,24 +543,41 @@ body {
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
-  color: #4e5b74;
+  color: var(--text-secondary);
+}
+
+.toolbar select {
+  background: var(--surface-alt);
+  color: var(--text-primary);
 }
 
 .toolbar button {
   border: none;
-  border-radius: 10px;
+  border-radius: 8px;
   cursor: pointer;
-  background: #1d4ed8;
-  color: white;
+  background: var(--accent);
+  color: #ffffff;
   padding: 0.7rem 1rem;
   font-weight: 600;
   align-self: flex-end;
+  transition: background 0.15s;
 }
+
+.toolbar button:hover {
+  background: var(--accent-hover);
+}
+
+.toolbar button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Table ──────────────────────────────────────────────────────────────── */
 
 .tableWrap {
   overflow-x: auto;
-  border: 1px solid #e4e9f6;
-  border-radius: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
 }
 
 table {
@@ -436,11 +590,46 @@ th,
 td {
   padding: 0.7rem;
   text-align: left;
-  border-bottom: 1px solid #edf1fb;
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 th {
-  background: #f7f9ff;
+  background: var(--surface-alt);
+  color: var(--text-secondary);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+tbody tr:nth-child(even) {
+  background: var(--row-even);
+}
+
+tbody tr:nth-child(odd) {
+  background: var(--row-odd);
+}
+
+tbody tr:hover {
+  background: rgba(41, 98, 255, 0.06);
+}
+
+td strong {
+  color: var(--text-primary);
+}
+
+/* ── Portfolio summary grid ─────────────────────────────────────────────── */
+
+.summaryGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1rem;
+  margin-top: 0.5rem;
+}
+
+.summaryCard {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.8rem;
+  background: var(--surface-alt);
 }
 
 .backtestStats {
@@ -451,18 +640,21 @@ th {
 }
 
 .backtestStats > div {
-  border: 1px solid #e4e9f6;
-  border-radius: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
   padding: 0.8rem;
+  background: var(--surface-alt);
 }
+
+/* ── Disclaimer box ─────────────────────────────────────────────────────── */
 
 .disclaimerBox {
   margin-top: 1rem;
-  border: 1px solid #f2dcc1;
-  background: #fff8ef;
-  border-radius: 12px;
+  border: 1px solid #4a3520;
+  background: #1a1408;
+  border-radius: 10px;
   padding: 0.8rem;
-  color: #665036;
+  color: #d4a55a;
 }
 
 .disclaimerBox p {
@@ -472,6 +664,82 @@ th {
 .disclaimerBox p + p {
   margin-top: 0.35rem;
 }
+
+/* ── Gain/loss colors ───────────────────────────────────────────────────── */
+
+.gain {
+  color: var(--positive);
+  font-weight: 600;
+}
+
+.loss {
+  color: var(--negative);
+  font-weight: 600;
+}
+
+/* ── Add holding form ───────────────────────────────────────────────────── */
+
+.addHoldingForm {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 0.75rem;
+  margin-top: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-alt);
+}
+
+.addHoldingForm label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+}
+
+.addHoldingForm input,
+.addHoldingForm textarea {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.6rem 0.75rem;
+  font-size: 0.95rem;
+  background: var(--bg);
+  color: var(--text-primary);
+}
+
+.addHoldingForm input::placeholder,
+.addHoldingForm textarea::placeholder {
+  color: var(--text-muted);
+}
+
+.addHoldingForm textarea {
+  resize: vertical;
+  min-height: 2.5rem;
+}
+
+.addHoldingForm button {
+  align-self: flex-end;
+  border: none;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #ffffff;
+  padding: 0.6rem 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.addHoldingForm button:hover {
+  background: var(--accent-hover);
+}
+
+.addHoldingForm button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Screen-reader only ─────────────────────────────────────────────────── */
 
 .srOnly {
   position: absolute;
@@ -484,12 +752,15 @@ th {
   border: 0;
 }
 
+/* ── Responsive ─────────────────────────────────────────────────────────── */
+
 @media (max-width: 700px) {
   .searchForm {
     flex-direction: column;
   }
 
-  .backtestStats {
+  .backtestStats,
+  .summaryGrid {
     grid-template-columns: 1fr;
   }
 
@@ -501,5 +772,9 @@ th {
   .fundamentalsHeader {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .addHoldingForm {
+    grid-template-columns: 1fr;
   }
 }

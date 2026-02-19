@@ -1,139 +1,196 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { currencyFormatter } from '@/utils/formatters';
-import { PortfolioHolding } from '@/lib/portfolio';
+import { EnrichedPortfolioHolding } from '@/types';
 
-type PriceState = {
-  price: number | null;
-  error: string | null;
+type PortfolioResponse = {
+  holdings: EnrichedPortfolioHolding[];
+  error?: string;
 };
 
-async function fetchPortfolio(): Promise<{ holdings: PortfolioHolding[] }> {
+async function fetchPortfolio(): Promise<EnrichedPortfolioHolding[]> {
   const response = await fetch('/api/portfolio', { cache: 'no-store' });
-  const payload = (await response.json()) as { holdings?: PortfolioHolding[]; error?: string };
+  const payload = (await response.json()) as PortfolioResponse;
 
   if (!response.ok) {
     throw new Error(payload.error ?? 'Could not load portfolio.');
   }
 
-  return { holdings: Array.isArray(payload.holdings) ? payload.holdings : [] };
+  return Array.isArray(payload.holdings) ? payload.holdings : [];
 }
 
-async function fetchPrice(ticker: string): Promise<number> {
+async function fetchIndividualPrice(ticker: string): Promise<number> {
   const response = await fetch(`/api/market/quote?ticker=${encodeURIComponent(ticker)}`, { cache: 'no-store' });
   const payload = (await response.json()) as { price?: number; error?: string };
 
-  if (!response.ok) {
+  if (!response.ok || payload.price == null || !Number.isFinite(payload.price)) {
     throw new Error(payload.error ?? `Could not fetch price for ${ticker}.`);
-  }
-
-  if (payload.price == null || !Number.isFinite(payload.price)) {
-    throw new Error(`Invalid price returned for ${ticker}.`);
   }
 
   return payload.price;
 }
 
-function gainColor(gain: number): string {
-  if (gain > 0) return '#15803d';
-  if (gain < 0) return '#b42318';
-  return 'inherit';
+async function postHolding(data: {
+  ticker: string;
+  companyName: string;
+  shares: number;
+  purchasePrice: number;
+  purchaseDate: string;
+  notes?: string;
+}): Promise<void> {
+  const response = await fetch('/api/portfolio', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+
+  if (!response.ok) {
+    const payload = (await response.json()) as { error?: string };
+    throw new Error(payload.error ?? 'Could not save holding.');
+  }
+}
+
+async function deleteHolding(ticker: string): Promise<void> {
+  const response = await fetch(`/api/portfolio/${encodeURIComponent(ticker)}`, {
+    method: 'DELETE',
+  });
+
+  if (!response.ok) {
+    const payload = (await response.json()) as { error?: string };
+    throw new Error(payload.error ?? 'Could not remove holding.');
+  }
+}
+
+function gainClass(value: number | null): string {
+  if (value === null) return '';
+  if (value > 0) return 'gain';
+  if (value < 0) return 'loss';
+  return '';
 }
 
 export default function PortfolioPage() {
-  const [holdings, setHoldings] = useState<PortfolioHolding[]>([]);
-  const [prices, setPrices] = useState<Record<string, PriceState>>({});
+  const [holdings, setHoldings] = useState<EnrichedPortfolioHolding[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [isPriceLoading, setIsPriceLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const loadPrices = useCallback(async (tickers: string[]) => {
-    if (tickers.length === 0) return;
-    setIsPriceLoading(true);
+  // Add form state
+  const [formTicker, setFormTicker] = useState('');
+  const [formCompany, setFormCompany] = useState('');
+  const [formShares, setFormShares] = useState('');
+  const [formPrice, setFormPrice] = useState('');
+  const [formDate, setFormDate] = useState(new Date().toISOString().split('T')[0]);
+  const [formNotes, setFormNotes] = useState('');
+  const [isAdding, setIsAdding] = useState(false);
+  const [addError, setAddError] = useState<string | null>(null);
 
-    const results = await Promise.allSettled(tickers.map((ticker) => fetchPrice(ticker)));
+  // Remove state
+  const [removingTicker, setRemovingTicker] = useState<string | null>(null);
 
-    const next: Record<string, PriceState> = {};
-    tickers.forEach((ticker, i) => {
-      const result = results[i];
-      if (result.status === 'fulfilled') {
-        next[ticker] = { price: result.value, error: null };
-      } else {
-        const message = result.reason instanceof Error ? result.reason.message : `Could not load price for ${ticker}.`;
-        next[ticker] = { price: null, error: message };
+  const loadPortfolio = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      let enriched = await fetchPortfolio();
+
+      // Fallback: fetch individual prices for holdings without currentPrice
+      const needPrice = enriched.filter((h) => h.currentPrice === null);
+      if (needPrice.length > 0) {
+        const uniqueTickers = [...new Set(needPrice.map((h) => h.ticker))];
+        const priceResults = await Promise.allSettled(
+          uniqueTickers.map((t) => fetchIndividualPrice(t))
+        );
+
+        const fallbackPrices = new Map<string, number>();
+        uniqueTickers.forEach((t, i) => {
+          const result = priceResults[i];
+          if (result.status === 'fulfilled') {
+            fallbackPrices.set(t, result.value);
+          }
+        });
+
+        enriched = enriched.map((h) => {
+          if (h.currentPrice !== null) return h;
+          const price = fallbackPrices.get(h.ticker) ?? null;
+          if (price === null) return h;
+          const costBasis = h.shares * h.purchasePrice;
+          const currentValue = h.shares * price;
+          const gainLossDollar = currentValue - costBasis;
+          const gainLossPercent = costBasis > 0 ? (gainLossDollar / costBasis) * 100 : null;
+          return { ...h, currentPrice: price, currentValue, gainLossDollar, gainLossPercent };
+        });
       }
-    });
 
-    setPrices(next);
-    setIsPriceLoading(false);
+      setHoldings(enriched);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not load portfolio.');
+    } finally {
+      setIsLoading(false);
+    }
   }, []);
 
   useEffect(() => {
-    let isMounted = true;
-
-    const load = async () => {
-      setIsLoading(true);
-      setError(null);
-
-      try {
-        const portfolio = await fetchPortfolio();
-
-        if (!isMounted) return;
-
-        setHoldings(portfolio.holdings);
-
-        // Unique tickers only
-        const uniqueTickers = [...new Set(portfolio.holdings.map((h) => h.ticker))];
-        void loadPrices(uniqueTickers);
-      } catch (loadError) {
-        if (!isMounted) return;
-        const message = loadError instanceof Error ? loadError.message : 'Could not load portfolio.';
-        setError(message);
-      } finally {
-        if (isMounted) setIsLoading(false);
-      }
-    };
-
-    void load();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [loadPrices]);
-
-  const handleRefresh = () => {
-    const uniqueTickers = [...new Set(holdings.map((h) => h.ticker))];
-    void loadPrices(uniqueTickers);
-  };
-
-  const rows = useMemo(() => {
-    return holdings.map((holding) => {
-      const costBasis = holding.shares * holding.purchasePrice;
-      const priceState = prices[holding.ticker];
-      const currentPrice = priceState?.price ?? null;
-      const currentValue = currentPrice !== null ? holding.shares * currentPrice : null;
-      const gainDollar = currentValue !== null ? currentValue - costBasis : null;
-      const gainPercent = gainDollar !== null ? (gainDollar / costBasis) * 100 : null;
-
-      return { holding, costBasis, currentPrice, currentValue, gainDollar, gainPercent, priceError: priceState?.error ?? null };
-    });
-  }, [holdings, prices]);
+    void loadPortfolio();
+  }, [loadPortfolio]);
 
   const totals = useMemo(() => {
-    const totalCost = rows.reduce((sum, r) => sum + r.costBasis, 0);
-    const totalValue = rows.reduce((sum, r) => sum + (r.currentValue ?? r.costBasis), 0);
-    const totalGain = totalValue - totalCost;
-    const totalGainPercent = totalCost > 0 ? (totalGain / totalCost) * 100 : 0;
-    return { totalCost, totalValue, totalGain, totalGainPercent };
-  }, [rows]);
+    const totalInvested = holdings.reduce((sum, h) => sum + h.shares * h.purchasePrice, 0);
+    const totalValue = holdings.reduce((sum, h) => sum + (h.currentValue ?? h.shares * h.purchasePrice), 0);
+    const totalGain = totalValue - totalInvested;
+    const totalGainPercent = totalInvested > 0 ? (totalGain / totalInvested) * 100 : 0;
+    return { totalInvested, totalValue, totalGain, totalGainPercent };
+  }, [holdings]);
+
+  const handleAdd = async (e: FormEvent) => {
+    e.preventDefault();
+    setAddError(null);
+    setIsAdding(true);
+
+    try {
+      await postHolding({
+        ticker: formTicker.trim().toUpperCase(),
+        companyName: formCompany.trim() || formTicker.trim().toUpperCase(),
+        shares: Number(formShares),
+        purchasePrice: Number(formPrice),
+        purchaseDate: formDate,
+        notes: formNotes.trim() || undefined,
+      });
+
+      // Reset form
+      setFormTicker('');
+      setFormCompany('');
+      setFormShares('');
+      setFormPrice('');
+      setFormDate(new Date().toISOString().split('T')[0]);
+      setFormNotes('');
+
+      // Reload
+      await loadPortfolio();
+    } catch (err) {
+      setAddError(err instanceof Error ? err.message : 'Could not add holding.');
+    } finally {
+      setIsAdding(false);
+    }
+  };
+
+  const handleRemove = async (ticker: string) => {
+    setRemovingTicker(ticker);
+    try {
+      await deleteHolding(ticker);
+      await loadPortfolio();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not remove holding.');
+    } finally {
+      setRemovingTicker(null);
+    }
+  };
 
   return (
     <main className="page">
       <section className="card wideCard">
         <header className="header">
           <h1>Portfolio</h1>
-          <p>Holdings with live price data and gain/loss tracking.</p>
+          <p>Track your holdings with live price data and gain/loss calculations.</p>
         </header>
 
         {isLoading ? <p className="status">Loading portfolio...</p> : null}
@@ -141,94 +198,165 @@ export default function PortfolioPage() {
 
         {!isLoading && !error ? (
           <>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '0.75rem' }}>
-              <button
-                type="button"
-                className="refreshButton"
-                style={{ border: 'none', borderRadius: '10px', cursor: 'pointer', padding: '0.55rem 1rem', fontWeight: 600 }}
-                onClick={handleRefresh}
-                disabled={isPriceLoading}
-              >
-                {isPriceLoading ? 'Refreshing...' : 'Refresh Prices'}
-              </button>
-            </div>
-
-            <div className="backtestStats" style={{ gridTemplateColumns: 'repeat(4, minmax(0, 1fr))' }}>
-              <div>
-                <p className="subtle">Total Cost Basis</p>
-                <p className="priceLine">{currencyFormatter.format(totals.totalCost)}</p>
+            {/* Summary cards */}
+            <div className="summaryGrid">
+              <div className="summaryCard">
+                <p className="subtle">Total Invested</p>
+                <p className="priceLine">{currencyFormatter.format(totals.totalInvested)}</p>
               </div>
-              <div>
-                <p className="subtle">Total Current Value</p>
+              <div className="summaryCard">
+                <p className="subtle">Current Value</p>
                 <p className="priceLine">{currencyFormatter.format(totals.totalValue)}</p>
               </div>
-              <div>
-                <p className="subtle">Total Gain/Loss</p>
-                <p className="priceLine" style={{ color: gainColor(totals.totalGain) }}>
+              <div className="summaryCard">
+                <p className="subtle">Overall Gain/Loss</p>
+                <p className={`priceLine ${gainClass(totals.totalGain)}`}>
                   {totals.totalGain >= 0 ? '+' : ''}{currencyFormatter.format(totals.totalGain)}
                 </p>
               </div>
-              <div>
-                <p className="subtle">Total Gain/Loss %</p>
-                <p className="priceLine" style={{ color: gainColor(totals.totalGainPercent) }}>
+              <div className="summaryCard">
+                <p className="subtle">Overall Gain/Loss %</p>
+                <p className={`priceLine ${gainClass(totals.totalGainPercent)}`}>
                   {totals.totalGainPercent >= 0 ? '+' : ''}{totals.totalGainPercent.toFixed(2)}%
                 </p>
               </div>
             </div>
 
+            {/* Holdings table */}
             <div className="tableWrap" style={{ marginTop: '1rem' }}>
               <table>
                 <thead>
                   <tr>
                     <th>Ticker</th>
+                    <th>Company</th>
                     <th>Shares</th>
                     <th>Purchase Price</th>
-                    <th>Cost Basis</th>
                     <th>Current Price</th>
-                    <th>Current Value</th>
-                    <th>Gain/Loss $</th>
-                    <th>Gain/Loss %</th>
-                    <th>Purchase Date</th>
+                    <th>Gain/Loss ($)</th>
+                    <th>Gain/Loss (%)</th>
+                    <th>Total Value</th>
+                    <th></th>
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((row, index) => (
-                    <tr key={`${row.holding.ticker}-${row.holding.purchaseDate}-${index}`}>
-                      <td>{row.holding.ticker}</td>
-                      <td>{row.holding.shares}</td>
-                      <td>{currencyFormatter.format(row.holding.purchasePrice)}</td>
-                      <td>{currencyFormatter.format(row.costBasis)}</td>
+                  {holdings.map((h, index) => (
+                    <tr key={`${h.ticker}-${h.purchaseDate}-${index}`}>
+                      <td><strong>{h.ticker}</strong></td>
+                      <td>{h.companyName || '\u2014'}</td>
+                      <td>{h.shares}</td>
+                      <td>{currencyFormatter.format(h.purchasePrice)}</td>
                       <td>
-                        {row.priceError ? (
-                          <span title={row.priceError} style={{ color: '#b42318' }}>— (error)</span>
-                        ) : row.currentPrice !== null ? (
-                          currencyFormatter.format(row.currentPrice)
-                        ) : (
-                          '—'
-                        )}
+                        {h.currentPrice !== null
+                          ? currencyFormatter.format(h.currentPrice)
+                          : '\u2014'}
                       </td>
-                      <td>{row.currentValue !== null ? currencyFormatter.format(row.currentValue) : '—'}</td>
-                      <td style={{ color: row.gainDollar !== null ? gainColor(row.gainDollar) : 'inherit', fontWeight: 600 }}>
-                        {row.gainDollar !== null
-                          ? `${row.gainDollar >= 0 ? '+' : ''}${currencyFormatter.format(row.gainDollar)}`
-                          : '—'}
+                      <td className={gainClass(h.gainLossDollar)}>
+                        {h.gainLossDollar !== null
+                          ? `${h.gainLossDollar >= 0 ? '+' : ''}${currencyFormatter.format(h.gainLossDollar)}`
+                          : '\u2014'}
                       </td>
-                      <td style={{ color: row.gainPercent !== null ? gainColor(row.gainPercent) : 'inherit', fontWeight: 600 }}>
-                        {row.gainPercent !== null
-                          ? `${row.gainPercent >= 0 ? '+' : ''}${row.gainPercent.toFixed(2)}%`
-                          : '—'}
+                      <td className={gainClass(h.gainLossPercent)}>
+                        {h.gainLossPercent !== null
+                          ? `${h.gainLossPercent >= 0 ? '+' : ''}${h.gainLossPercent.toFixed(2)}%`
+                          : '\u2014'}
                       </td>
-                      <td>{row.holding.purchaseDate}</td>
+                      <td>
+                        {h.currentValue !== null
+                          ? currencyFormatter.format(h.currentValue)
+                          : '\u2014'}
+                      </td>
+                      <td>
+                        <button
+                          type="button"
+                          className="removeBtn"
+                          onClick={() => void handleRemove(h.ticker)}
+                          disabled={removingTicker === h.ticker}
+                        >
+                          {removingTicker === h.ticker ? '...' : 'Remove'}
+                        </button>
+                      </td>
                     </tr>
                   ))}
-                  {rows.length === 0 ? (
+                  {holdings.length === 0 ? (
                     <tr>
-                      <td colSpan={9}>No holdings yet. Use the Buy button on the Home or Rankings page.</td>
+                      <td colSpan={9} style={{ textAlign: 'center', padding: '2rem' }}>
+                        No holdings yet. Use the form below to add your first position.
+                      </td>
                     </tr>
                   ) : null}
                 </tbody>
               </table>
             </div>
+
+            {/* Add holding form */}
+            <h2 style={{ marginTop: '1.5rem', marginBottom: '0.25rem' }}>Add Holding</h2>
+            <form className="addHoldingForm" onSubmit={(e) => void handleAdd(e)}>
+              <label>
+                Ticker
+                <input
+                  type="text"
+                  value={formTicker}
+                  onChange={(e) => setFormTicker(e.target.value.toUpperCase())}
+                  placeholder="AAPL"
+                  required
+                />
+              </label>
+              <label>
+                Company Name
+                <input
+                  type="text"
+                  value={formCompany}
+                  onChange={(e) => setFormCompany(e.target.value)}
+                  placeholder="Apple Inc."
+                />
+              </label>
+              <label>
+                Shares
+                <input
+                  type="number"
+                  min="0.01"
+                  step="any"
+                  value={formShares}
+                  onChange={(e) => setFormShares(e.target.value)}
+                  placeholder="10"
+                  required
+                />
+              </label>
+              <label>
+                Purchase Price
+                <input
+                  type="number"
+                  min="0.01"
+                  step="any"
+                  value={formPrice}
+                  onChange={(e) => setFormPrice(e.target.value)}
+                  placeholder="195.50"
+                  required
+                />
+              </label>
+              <label>
+                Purchase Date
+                <input
+                  type="date"
+                  value={formDate}
+                  onChange={(e) => setFormDate(e.target.value)}
+                  required
+                />
+              </label>
+              <label>
+                Notes (optional)
+                <input
+                  type="text"
+                  value={formNotes}
+                  onChange={(e) => setFormNotes(e.target.value)}
+                  placeholder="Added on dip"
+                />
+              </label>
+              <button type="submit" disabled={isAdding}>
+                {isAdding ? 'Adding...' : 'Add Holding'}
+              </button>
+            </form>
+            {addError ? <p className="status error" style={{ marginTop: '0.5rem' }}>{addError}</p> : null}
           </>
         ) : null}
       </section>

@@ -3,9 +3,11 @@ import path from 'path';
 
 export type PortfolioHolding = {
   ticker: string;
+  companyName: string;
   shares: number;
   purchasePrice: number;
-  purchaseDate: string; // ISO date string
+  purchaseDate: string; // ISO date string YYYY-MM-DD
+  notes?: string;
 };
 
 export type Portfolio = {

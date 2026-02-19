@@ -14,20 +14,22 @@ Defined in `src/universe/top50MarketCap.ts`.
 
 ## Current Functionality
 
-- **Home** page
-  - Initial load performs one browser request to `GET /api/market/universe-quotes`
-  - Shows Top 5 picks with **Buy** buttons (opens purchase modal)
+- **Rankings** page (landing page at `/`)
+  - Top 50 universe ranked by Value Score with **Buy** buttons per row
+  - Filter by ticker/company name, sort by Value Score or Market Cap
+  - Reads exclusively from the server-side preload cache — zero per-request fetching
 - **Ticker Detail** page
   - 1M / 6M / 1Y chart
   - Fundamentals panel with Value Score and component breakdown (P/E, P/S, Revenue Growth, Operating Margin — each 0–25 pts)
   - **Refresh data** button forces a cache re-fetch
   - **Buy** action records local trades
-- **Rankings** page
-  - Top 50 universe ranked by Value Score with **Buy** buttons per row
-  - Reads exclusively from the server-side preload cache — zero per-request fetching
 - **Portfolio** page
-  - Loads holdings from `data/portfolio.json` via `GET /api/portfolio`
-  - Table: Ticker | Shares | Purchase Price | Cost Basis | Current Price | Current Value | Gain/Loss $ | Gain/Loss %
+  - Displays holdings with current prices, gain/loss calculations, and a portfolio summary
+  - Table: Ticker | Company | Shares | Purchase Price | Current Price | Gain/Loss ($) | Gain/Loss (%) | Total Value
+  - Summary cards: Total Invested, Current Value, Overall Gain/Loss ($), Overall Gain/Loss (%)
+  - **Add Holding** form with ticker, company name, shares, purchase price, purchase date, and optional notes
+  - **Remove** button per holding
+  - Current prices read from the server-side cache; individual fetch as fallback for out-of-universe tickers
 
 ---
 
@@ -203,12 +205,45 @@ POLYGON_API_KEY=your_polygon_api_key_here
 SEC_USER_AGENT=Your Name your@email.com
 ```
 
-## Portfolio Data File
+## Portfolio
 
-Holdings are stored locally at `data/portfolio.json` (created automatically; excluded from git via `.gitignore`).
+Holdings are stored locally in `data/portfolio.json`. The file is created automatically on first use and is excluded from git via `.gitignore` to keep personal financial data private.
 
-- `GET /api/portfolio` — returns `{ holdings: PortfolioHolding[] }`
-- `POST /api/portfolio/buy` — body `{ ticker, shares, purchasePrice }`, appends a holding with today's date
+### JSON Structure
+
+The file is human-readable and can be manually edited between sessions:
+
+```json
+{
+  "holdings": [
+    {
+      "ticker": "AAPL",
+      "companyName": "Apple Inc.",
+      "shares": 10,
+      "purchasePrice": 195.50,
+      "purchaseDate": "2024-11-15",
+      "notes": "Added on dip"
+    }
+  ]
+}
+```
+
+Each holding has:
+- `ticker` — uppercase stock symbol
+- `companyName` — display name for the company
+- `shares` — number of shares held
+- `purchasePrice` — price per share at time of purchase (USD)
+- `purchaseDate` — date of purchase in `YYYY-MM-DD` format
+- `notes` — (optional) free-text annotation
+
+**Purchase price and quantity are never auto-updated** — the user controls these values manually, which is intentional. To adjust a position, edit the JSON file directly or remove and re-add via the UI.
+
+### API Routes
+
+- `GET /api/portfolio` — returns all holdings enriched with current price and calculated gain/loss from the data cache
+- `POST /api/portfolio` — adds a new holding; body: `{ ticker, companyName, shares, purchasePrice, purchaseDate, notes? }`
+- `DELETE /api/portfolio/:ticker` — removes all holdings for a ticker
+- `POST /api/portfolio/buy` — legacy quick-buy endpoint used by Rankings/Ticker Detail pages
 
 ## Rate Limits
 

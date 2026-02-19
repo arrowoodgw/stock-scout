@@ -252,16 +252,16 @@ export function TickerDetailView({ initialTicker = 'AAPL' }: TickerDetailViewPro
             <h2>Buy {quote.ticker}</h2>
             <p>Current price: <strong>${quote.price.toFixed(2)}</strong></p>
             <label style={{ display: 'block', marginTop: '1rem' }}>
-              <span style={{ color: '#5f6a80', fontSize: '0.9rem' }}>Number of shares</span>
+              <span className="labelText">Number of shares</span>
               <input
                 type="number"
                 min={1}
                 value={buyShares}
                 onChange={(e) => setBuyShares(Math.max(1, Number(e.target.value)))}
-                style={{ display: 'block', width: '100%', marginTop: '0.35rem', padding: '0.6rem 0.75rem', border: '1px solid #d4daea', borderRadius: '10px', fontSize: '1rem' }}
+                className="modalInput"
               />
             </label>
-            <p style={{ marginTop: '0.75rem', color: '#43506a' }}>
+            <p className="modalTotal">
               Total: <strong>${(buyShares * quote.price).toFixed(2)}</strong>
             </p>
             {buySuccess ? <p className="modalSuccess">{buySuccess}</p> : null}
