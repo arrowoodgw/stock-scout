@@ -34,7 +34,7 @@ export function HistoricalChart({ data, ticker, range }: HistoricalChartProps) {
         {ticker} · {range} Trend
       </h2>
       <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="chart" role="img" aria-label={`${ticker} ${range} chart`}>
-        <polyline fill="none" stroke="#1d4ed8" strokeWidth="3" points={points} />
+        <polyline fill="none" stroke="#2962ff" strokeWidth="3" points={points} />
       </svg>
       <div className="chartMeta">
         <span>Low: ${minPrice.toFixed(2)}</span>

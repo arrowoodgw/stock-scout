@@ -77,3 +77,25 @@ export type DataCachePayload = {
   /** Error message if status === 'error'. */
   error?: string;
 };
+
+// ---------------------------------------------------------------------------
+// Portfolio types
+// ---------------------------------------------------------------------------
+
+export type PortfolioHolding = {
+  ticker: string;
+  companyName: string;
+  shares: number;
+  purchasePrice: number;
+  /** ISO date string YYYY-MM-DD */
+  purchaseDate: string;
+  notes?: string;
+};
+
+/** Portfolio holding enriched with current market data for display. */
+export type EnrichedPortfolioHolding = PortfolioHolding & {
+  currentPrice: number | null;
+  currentValue: number | null;
+  gainLossDollar: number | null;
+  gainLossPercent: number | null;
+};
