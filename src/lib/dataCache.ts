@@ -24,7 +24,7 @@
 
 import { promises as fs } from 'fs';
 import path from 'path';
-import { top50MarketCap } from '@/universe/top50MarketCap';
+import { companyNames as builtInCompanyNames, top50MarketCap } from '@/universe/top50MarketCap';
 import { calculateValueScore } from '@/lib/valueScore';
 import { CacheStatus, DataCachePayload, EnrichedTicker } from '@/types';
 
@@ -230,15 +230,66 @@ async function fetchPolygonPrevSingle(ticker: string): Promise<{ price: number; 
   return { price: r.c, asOf: new Date(r.t).toISOString() };
 }
 
-function mockPrice(ticker: string): number {
-  const seed = ticker.split('').reduce((s, c) => s + c.charCodeAt(0), 0);
-  return Number((30 + (seed % 900) + (seed % 37) * 0.33).toFixed(2));
+/**
+ * Reproduce the same seeded simulation that MockStockDataProvider uses so that
+ * the price shown on the Rankings page (from cache) matches the price shown in
+ * the Ticker Detail PriceCard (from the provider's historical series).
+ *
+ * Mirrors MockStockDataProvider.buildYearHistory() — computes the final (most-recent)
+ * simulated closing price for a ticker without the artificial network delay.
+ */
+
+type MockSeedConfig = { base: number; trend: number; volatility: number };
+
+const MOCK_KNOWN_CONFIGS: Record<string, MockSeedConfig> = {
+  AAPL: { base: 190, trend: 0.09, volatility: 2.8 },
+  MSFT: { base: 420, trend: 0.11, volatility: 3.1 },
+  TSLA: { base: 220, trend: 0.07, volatility: 6.2 },
+  NVDA: { base: 840, trend: 0.2,  volatility: 9.4 }
+};
+
+function tickerToSeed(ticker: string): number {
+  return ticker.split('').reduce((sum, c) => sum + c.charCodeAt(0), 0);
+}
+
+function buildMockConfig(ticker: string): MockSeedConfig {
+  const seed = tickerToSeed(ticker);
+  return {
+    base: 30 + (seed % 900),
+    trend: 0.03 + (seed % 12) * 0.01,
+    volatility: 1.8 + (seed % 50) * 0.08
+  };
+}
+
+function seededRandom(seed: number): () => number {
+  let v = seed;
+  return () => {
+    v = (v * 9301 + 49297) % 233280;
+    return v / 233280;
+  };
+}
+
+function mockSimulatedPrice(ticker: string): number {
+  const normalised = ticker.trim().toUpperCase();
+  const config = MOCK_KNOWN_CONFIGS[normalised] ?? buildMockConfig(normalised);
+  const seed = tickerToSeed(normalised);
+  const random = seededRandom(seed);
+  const DAYS = 252;
+
+  let price = 5;
+  for (let i = 0; i < DAYS; i++) {
+    const drift = i * config.trend;
+    const noise = (random() - 0.5) * config.volatility;
+    const wave = Math.sin(i / 8) * config.volatility;
+    price = Math.max(5, Number((config.base + drift + noise + wave).toFixed(2)));
+  }
+  return price;
 }
 
 async function fetchUniverseQuotes(tickers: string[]): Promise<QuoteMap> {
   if (!isRealMode()) {
     const asOf = new Date().toISOString();
-    return Object.fromEntries(tickers.map((t) => [t, { price: mockPrice(t), asOf }]));
+    return Object.fromEntries(tickers.map((t) => [t, { price: mockSimulatedPrice(t), asOf }]));
   }
 
   // Try grouped daily for recent trading days (one request covers all tickers)
@@ -510,7 +561,8 @@ async function enrichAllTickers(
     const quote = quotes[ticker] ?? null;
     const latestPrice = quote?.price ?? null;
     const secEntry = secMap[ticker] ?? null;
-    const companyName = secEntry?.name ?? null;
+    // Prefer the authoritative SEC name; fall back to the embedded universe list
+    const companyName = secEntry?.name ?? builtInCompanyNames[ticker] ?? null;
 
     let facts: SecFacts;
 

@@ -99,6 +99,17 @@ export function TickerDetailView({ initialTicker = 'AAPL' }: TickerDetailViewPro
         }
 
         setEnriched(result.ticker);
+
+        // Keep the displayed price consistent with the cache (same source as Rankings).
+        // The chart visualises the historical simulation; the price badge shows the
+        // pre-loaded cache value so both pages agree on the current price.
+        if (result.ticker.latestPrice !== null) {
+          setQuote((prev) => ({
+            ticker: result.ticker.ticker,
+            price: result.ticker.latestPrice as number,
+            updatedAt: result.ticker.fundamentalsAsOf ?? prev?.updatedAt ?? new Date().toISOString()
+          }));
+        }
       } catch (err) {
         if (!isMounted) return;
         setFundamentalsError(err instanceof Error ? err.message : 'Could not load fundamentals.');

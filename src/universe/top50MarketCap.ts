@@ -51,6 +51,64 @@ export const tickers = [
   'PM'
 ] as const;
 
+/**
+ * Built-in company name fallback for all 50 universe tickers.
+ * Used when data/sec_cik_map.json has not been generated yet (npm run seed:sec).
+ * Authoritative names come from the SEC mapping; this map just prevents blank columns.
+ */
+export const companyNames: Record<string, string> = {
+  AAPL:  'Apple Inc.',
+  MSFT:  'Microsoft Corporation',
+  NVDA:  'NVIDIA Corporation',
+  AMZN:  'Amazon.com, Inc.',
+  GOOGL: 'Alphabet Inc.',
+  META:  'Meta Platforms, Inc.',
+  'BRK.B': 'Berkshire Hathaway Inc.',
+  TSM:   'Taiwan Semiconductor Manufacturing Co.',
+  TSLA:  'Tesla, Inc.',
+  LLY:   'Eli Lilly and Company',
+  AVGO:  'Broadcom Inc.',
+  WMT:   'Walmart Inc.',
+  JPM:   'JPMorgan Chase & Co.',
+  V:     'Visa Inc.',
+  XOM:   'Exxon Mobil Corporation',
+  MA:    'Mastercard Incorporated',
+  UNH:   'UnitedHealth Group Incorporated',
+  ORCL:  'Oracle Corporation',
+  COST:  'Costco Wholesale Corporation',
+  PG:    'The Procter & Gamble Company',
+  JNJ:   'Johnson & Johnson',
+  HD:    'The Home Depot, Inc.',
+  BAC:   'Bank of America Corporation',
+  ABBV:  'AbbVie Inc.',
+  KO:    'The Coca-Cola Company',
+  MRK:   'Merck & Co., Inc.',
+  NFLX:  'Netflix, Inc.',
+  CRM:   'Salesforce, Inc.',
+  CVX:   'Chevron Corporation',
+  AMD:   'Advanced Micro Devices, Inc.',
+  ASML:  'ASML Holding N.V.',
+  SAP:   'SAP SE',
+  PEP:   'PepsiCo, Inc.',
+  ADBE:  'Adobe Inc.',
+  TMUS:  'T-Mobile US, Inc.',
+  MCD:   "McDonald's Corporation",
+  NVO:   'Novo Nordisk A/S',
+  CSCO:  'Cisco Systems, Inc.',
+  AZN:   'AstraZeneca PLC',
+  ACN:   'Accenture plc',
+  LIN:   'Linde plc',
+  DIS:   'The Walt Disney Company',
+  ABT:   'Abbott Laboratories',
+  WFC:   'Wells Fargo & Company',
+  INTU:  'Intuit Inc.',
+  TXN:   'Texas Instruments Incorporated',
+  DHR:   'Danaher Corporation',
+  CMCSA: 'Comcast Corporation',
+  QCOM:  'QUALCOMM Incorporated',
+  PM:    'Philip Morris International Inc.'
+};
+
 export const asOf = '2026-02-17';
 export const source = 'CompaniesMarketCap (updated daily)';
 
