@@ -20,18 +20,157 @@ Defined in `src/universe/top50MarketCap.ts`.
 - **Ticker Detail** page
   - 1M / 6M / 1Y chart
   - Fundamentals panel with Value Score and component breakdown (P/E, P/S, Revenue Growth, Operating Margin — each 0–25 pts)
-  - **Refresh data** button bypasses cache
+  - **Refresh data** button forces a cache re-fetch
   - **Buy** action records local trades
 - **Rankings** page
   - Top 50 universe ranked by Value Score with **Buy** buttons per row
-- **Backtest Lite** page
-  - Runs over the Top 50 universe
+  - Reads exclusively from the server-side preload cache — zero per-request fetching
 - **Portfolio** page
   - Loads holdings from `data/portfolio.json` via `GET /api/portfolio`
-  - Fetches current prices per ticker in parallel from the provider
   - Table: Ticker | Shares | Purchase Price | Cost Basis | Current Price | Current Value | Gain/Loss $ | Gain/Loss %
-  - Summary totals and **Refresh Prices** button
-  - Gains colored green, losses red; price errors shown inline without failing the page
+
+---
+
+## Data Sources & Data Model
+
+### SEC CIK Mapping
+
+The SEC provides an official mapping of ticker symbols to CIK (Central Index Key) numbers, which are required to look up a company's financial filings.
+
+- **Source URL:** `https://www.sec.gov/files/company_tickers.json`
+- **Local file:** `data/sec_cik_map.json`
+- **Schema:** `{ [TICKER]: { cik: string, name: string } }` — uppercase ticker keys, zero-padded 10-digit CIK strings
+- **Regenerate:** `npm run seed:sec` (requires `SEC_USER_AGENT` to be set in `.env.local`)
+
+The file is committed to the repository so the app has company names available even before the seed script is run.
+
+### Data Model — `EnrichedTicker`
+
+The canonical type is defined in `src/types/index.ts` and is shared across the entire app.
+
+| Field | Type | Source | Notes |
+|---|---|---|---|
+| `ticker` | `string` | Universe list | Uppercase, e.g. `"AAPL"` |
+| `companyName` | `string \| null` | `data/sec_cik_map.json` | Full legal name from SEC |
+| `latestPrice` | `number \| null` | Polygon.io (prev close) | USD |
+| `marketCap` | `number \| null` | Computed: `latestPrice x sharesOutstanding` | USD |
+| `peTtm` | `number \| null` | Computed: `latestPrice / epsTtm` | Price-to-earnings TTM |
+| `ps` | `number \| null` | Computed: `marketCap / revenueTtm` | Price-to-sales TTM |
+| `epsTtm` | `number \| null` | SEC EDGAR company facts | Earnings per share diluted, TTM sum of 4 quarters |
+| `revenueTtm` | `number \| null` | SEC EDGAR company facts | USD, TTM sum of 4 quarters |
+| `revenueGrowthYoY` | `number \| null` | SEC EDGAR company facts | % change, most recent vs prior fiscal year |
+| `operatingMargin` | `number \| null` | SEC EDGAR company facts | %, computed from operating income / revenue |
+| `valueScore` | `number` | Calculated at startup | 0-100 composite score |
+| `scoreBreakdown.peScore` | `number` | Calculated at startup | 0-25 P/E sub-score |
+| `scoreBreakdown.psScore` | `number` | Calculated at startup | 0-25 P/S sub-score |
+| `scoreBreakdown.revenueGrowthScore` | `number` | Calculated at startup | 0-25 growth sub-score |
+| `scoreBreakdown.operatingMarginScore` | `number` | Calculated at startup | 0-25 margin sub-score |
+| `fundamentalsAsOf` | `string \| null` | SEC EDGAR | ISO timestamp of most recent reported period |
+
+If any field is unavailable for a given ticker, it is stored as `null` — never omitted. This makes rendering predictable and eliminates conditional checks for missing keys.
+
+### Preload / Cache System
+
+All data fetching and all score calculations happen **at server startup**, never at render time.
+
+**How it works:**
+
+1. When the Next.js server starts, `instrumentation.ts` calls `triggerPreload()` from `src/lib/dataCache.ts`
+2. The preload pipeline runs in the background:
+   - Loads `data/sec_cik_map.json` for company names and CIK numbers
+   - Fetches all universe quotes from Polygon.io in a single grouped-daily call
+   - Fetches SEC EDGAR company facts per ticker to extract TTM fundamentals
+   - Computes `peTtm`, `ps`, `marketCap`, `valueScore`, and `scoreBreakdown` for all 50 tickers
+3. Results are stored in a server-side singleton (`src/lib/dataCache.ts`) with a `lastUpdated` timestamp
+4. `GET /api/rankings` and `GET /api/ticker?ticker=XXX` read exclusively from this cache — no additional fetching occurs on page navigation
+
+**Cache states:**
+
+| Status | Meaning |
+|---|---|
+| `cold` | App just started, preload not yet triggered |
+| `loading` | Preload is in progress |
+| `ready` | Cache is fully populated; all pages serve data instantly |
+| `error` | Preload encountered a fatal error |
+
+**Manual refresh:**
+
+- The **Refresh data** button on the Rankings page sends `POST /api/preload?refresh=1`
+- This triggers a full re-fetch and re-calculation of all 50 tickers
+- The UI polls `GET /api/rankings` every 3 seconds until status returns to `ready`
+
+**Out-of-universe tickers** (e.g., a user types an arbitrary symbol in Ticker Detail):
+- These fall back to on-demand fetching via the existing provider system
+- Scores are calculated server-side in `GET /api/ticker` before the response is sent — never in the browser
+
+---
+
+## Value Score Methodology
+
+The Value Score is a composite 0-100 metric built from four equally-weighted components (0-25 each). All scores are **pre-calculated at startup** by `src/lib/valueScore.ts` and stored in the cache. The UI performs no calculations — it only renders the stored values.
+
+### Components
+
+#### P/E Score (0-25) — Valuation relative to earnings
+Lower P/E = better value. Rewards companies trading at a reasonable multiple of earnings.
+
+| P/E | Score |
+|---|---|
+| <= 10 | 25 (max) |
+| 25 | ~12-13 |
+| >= 40 | 0 |
+| Negative or null | 0 |
+
+Formula: `25 x (1 - (P/E - 10) / 30)`, clamped to [0, 25]
+
+#### P/S Score (0-25) — Valuation relative to revenue
+Lower P/S = better value. Useful for companies with thin or negative earnings where P/E is uninformative.
+
+| P/S | Score |
+|---|---|
+| <= 1 | 25 (max) |
+| 5.5 | ~12 |
+| >= 10 | 0 |
+| null | 0 |
+
+Formula: `25 x (1 - (P/S - 1) / 9)`, clamped to [0, 25]
+
+#### Revenue Growth Score (0-25) — Momentum
+Higher year-over-year revenue growth = higher score. Rewards companies growing their top line.
+
+| YoY Growth | Score |
+|---|---|
+| >= 20% | 25 (max) |
+| 10% | ~12-13 |
+| <= 0% | 0 |
+| Negative or null | 0 |
+
+Formula: `25 x (growth / 20)`, clamped to [0, 25]
+
+#### Operating Margin Score (0-25) — Quality and efficiency
+Higher operating margin = higher score. Rewards profitable, capital-efficient business models.
+
+| Operating Margin | Score |
+|---|---|
+| >= 25% | 25 (max) |
+| 12.5% | ~12-13 |
+| <= 0% | 0 |
+| Negative or null | 0 |
+
+Formula: `25 x (margin / 25)`, clamped to [0, 25]
+
+### Why these four factors?
+
+- **P/E and P/S** measure valuation from two angles: earnings-based and revenue-based. Using both prevents gaming the score with thin margins (P/E) or expensive revenue multiples (P/S).
+- **Revenue Growth** captures momentum — a fast-growing company may be expensive today but justified by future earnings.
+- **Operating Margin** captures quality and efficiency — it distinguishes durable businesses from high-revenue-but-low-profit operations.
+
+### Key guarantee
+
+> All scores are pre-calculated at server startup and served from the in-memory cache.
+> The UI never performs arithmetic — it only renders numbers it received from the server.
+
+---
 
 ## Setting Up `.env.local`
 
@@ -64,19 +203,6 @@ POLYGON_API_KEY=your_polygon_api_key_here
 SEC_USER_AGENT=Your Name your@email.com
 ```
 
-## Value Score Algorithm
-
-Each stock is scored 0–100 based on four equally-weighted components (0–25 each):
-
-| Component | Metric | Max when |
-|---|---|---|
-| P/E | `peTtm` | P/E ≤ 10 |
-| P/S | `ps` | P/S ≤ 1 |
-| Revenue Growth | `revenueGrowthYoY` | Growth ≥ 30% |
-| Operating Margin | `operatingMargin` | Margin ≥ 25% |
-
-The breakdown is shown on the Ticker Detail fundamentals panel.
-
 ## Portfolio Data File
 
 Holdings are stored locally at `data/portfolio.json` (created automatically; excluded from git via `.gitignore`).
@@ -84,24 +210,11 @@ Holdings are stored locally at `data/portfolio.json` (created automatically; exc
 - `GET /api/portfolio` — returns `{ holdings: PortfolioHolding[] }`
 - `POST /api/portfolio/buy` — body `{ ticker, shares, purchasePrice }`, appends a holding with today's date
 
-## Caching + Refresh Behavior
-
-- **Universe quotes cache** (`/api/market/universe-quotes`)
-  - key: ticker → `{ price, asOf, source }`
-  - TTL: ~10 minutes; concurrent refreshes coalesced
-- **History cache** (Polygon daily series)
-  - Full daily series cached per ticker; range sliced in memory
-  - TTL: ~12 hours
-- **Fundamentals cache** (SEC company facts)
-  - ticker → CIK cached in-memory; fundamentals cached 24 hours
-- **Refresh buttons**
-  - Ticker Detail `Refresh data` sends `refresh=1` and bypasses caches
-
 ## Rate Limits
 
-- Polygon free tier: 5 requests per minute. The provider enforces a 12-second minimum interval between requests; caching and in-flight deduplication reduce API fan-out.
-- Universe quote fetch uses Polygon's snapshot endpoint (single request for all tickers) with per-ticker fallback.
+- Polygon free tier: 5 requests per minute. Universe quotes use the grouped-daily endpoint (single request for all tickers) to minimise API fan-out.
 - SEC APIs require a descriptive `User-Agent`; set `SEC_USER_AGENT`.
+- In real mode, preloading all 50 tickers from SEC EDGAR is sequential to respect rate limits. Expect ~1-2 minutes for a full preload.
 
 ## Run Locally
 
@@ -115,10 +228,11 @@ Open http://localhost:3000.
 ## Scripts
 
 ```bash
-npm run dev
-npm run build
-npm run start
-npm run lint
+npm run dev          # Start development server (triggers preload in background)
+npm run build        # Production build
+npm run start        # Start production server
+npm run lint         # ESLint
+npm run seed:sec     # Regenerate data/sec_cik_map.json from SEC EDGAR
 ```
 
 ## Disclaimer

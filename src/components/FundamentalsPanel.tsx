@@ -1,10 +1,8 @@
-import { StockFundamentals } from '@/providers/types';
-import { ValueScoreBreakdown, calculateValueScore } from '@/scoring/calculateValueScore';
+import { EnrichedTicker } from '@/types';
 import { currencyFormatter, formatLargeCurrency, numberFormatter } from '@/utils/formatters';
 
 type FundamentalsPanelProps = {
-  fundamentals: StockFundamentals;
-  scoreBreakdown?: ValueScoreBreakdown | null;
+  enriched: EnrichedTicker;
 };
 
 function renderNumber(value: number | null) {
@@ -23,18 +21,17 @@ function renderLargeCurrency(value: number | null) {
   return value === null ? '—' : formatLargeCurrency(value);
 }
 
-export function FundamentalsPanel({ fundamentals, scoreBreakdown }: FundamentalsPanelProps) {
-  const scoreResult = calculateValueScore(fundamentals);
-  const breakdown = scoreBreakdown ?? scoreResult.breakdown;
+export function FundamentalsPanel({ enriched }: FundamentalsPanelProps) {
+  const { scoreBreakdown: breakdown } = enriched;
 
   const rows = [
-    { label: 'Market Cap', value: renderLargeCurrency(fundamentals.marketCap) },
-    { label: 'P/E (TTM)', value: renderNumber(fundamentals.peTtm) },
-    { label: 'P/S', value: renderNumber(fundamentals.ps) },
-    { label: 'EPS (TTM)', value: renderCurrency(fundamentals.epsTtm) },
-    { label: 'Revenue (TTM)', value: renderLargeCurrency(fundamentals.revenueTtm) },
-    { label: 'Revenue Year-over-Year Growth (%)', value: renderPercent(fundamentals.revenueGrowthYoY) },
-    { label: 'Operating Margin (%)', value: renderPercent(fundamentals.operatingMargin) }
+    { label: 'Market Cap', value: renderLargeCurrency(enriched.marketCap) },
+    { label: 'P/E (TTM)', value: renderNumber(enriched.peTtm) },
+    { label: 'P/S', value: renderNumber(enriched.ps) },
+    { label: 'EPS (TTM)', value: renderCurrency(enriched.epsTtm) },
+    { label: 'Revenue (TTM)', value: renderLargeCurrency(enriched.revenueTtm) },
+    { label: 'Revenue Year-over-Year Growth (%)', value: renderPercent(enriched.revenueGrowthYoY) },
+    { label: 'Operating Margin (%)', value: renderPercent(enriched.operatingMargin) }
   ];
 
   return (
@@ -42,7 +39,8 @@ export function FundamentalsPanel({ fundamentals, scoreBreakdown }: Fundamentals
       <div className="fundamentalsHeader">
         <h2>Fundamentals</h2>
         <p className="subtle">
-          {fundamentals.ticker} snapshot{fundamentals.asOf ? ` · As of ${new Date(fundamentals.asOf).toLocaleDateString()}` : ''}
+          {enriched.ticker}{enriched.companyName ? ` · ${enriched.companyName}` : ''}
+          {enriched.fundamentalsAsOf ? ` · As of ${new Date(enriched.fundamentalsAsOf).toLocaleDateString()}` : ''}
         </p>
       </div>
 
@@ -57,7 +55,7 @@ export function FundamentalsPanel({ fundamentals, scoreBreakdown }: Fundamentals
 
       <div className="valueScoreBox">
         <p className="subtle">Value Score</p>
-        <p className="valueScore">{scoreResult.total}/100</p>
+        <p className="valueScore">{enriched.valueScore}/100</p>
 
         <dl className="scoreBreakdown">
           <div className="scoreBreakdownRow">
@@ -70,16 +68,16 @@ export function FundamentalsPanel({ fundamentals, scoreBreakdown }: Fundamentals
           </div>
           <div className="scoreBreakdownRow">
             <dt>Revenue Growth</dt>
-            <dd>{breakdown.growthScore}/25</dd>
+            <dd>{breakdown.revenueGrowthScore}/25</dd>
           </div>
           <div className="scoreBreakdownRow">
             <dt>Operating Margin</dt>
-            <dd>{breakdown.marginScore}/25</dd>
+            <dd>{breakdown.operatingMarginScore}/25</dd>
           </div>
         </dl>
 
         <p className="scoreExplanation">
-          Each of four components contributes 0–25 points to a 0–100 total.
+          Each of four components contributes 0–25 points to a 0–100 total. All scores are pre-calculated at startup.
         </p>
       </div>
     </section>
