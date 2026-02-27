@@ -12,12 +12,23 @@ This repository implements M4 with a **Top 50 U.S. stocks by market cap universe
 
 Defined in `src/universe/top50MarketCap.ts`.
 
+## Architecture — M5.1 (Zero-Client-Fetch)
+
+As of M5.1 the Rankings landing page is an **async React Server Component**.
+
+1. `app/page.tsx` calls `getCacheSnapshot()` on the server. If the preload started by `instrumentation.ts` is still in flight, it joins that promise (no duplicate work) and waits for it to finish.
+2. The fully enriched `EnrichedTicker[]` array is serialised into the initial HTML payload — no client-side fetch on first paint.
+3. `src/components/RankingsClient.tsx` (a `'use client'` component) seeds its state with `useState(initialData)`. Sorting, filtering, and the buy modal all operate on that in-memory array.
+4. A network call is only made when the user explicitly clicks **Refresh data**, which POSTs to `/api/preload` and polls `/api/rankings` until the new snapshot is ready.
+
+The Portfolio and Ticker Detail pages retain client-side fetching because their data is user-specific or requires dynamic lookup beyond the pre-computed universe snapshot.
+
 ## Current Functionality
 
 - **Rankings** page (landing page at `/`)
   - Top 50 universe ranked by Value Score with **Buy** buttons per row
   - Filter by ticker/company name, sort by Value Score or Market Cap
-  - Reads exclusively from the server-side preload cache — zero per-request fetching
+  - All data embedded in initial HTML via async Server Component (M5.1) — zero client fetch on mount
 - **Ticker Detail** page
   - 1M / 6M / 1Y chart
   - Fundamentals panel with Value Score and component breakdown (P/E, P/S, Revenue Growth, Operating Margin — each 0–25 pts)

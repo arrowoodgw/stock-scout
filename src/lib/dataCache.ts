@@ -93,8 +93,20 @@ let preloadInFlight: Promise<void> | null = null;
 // Public API
 // ---------------------------------------------------------------------------
 
-/** Returns a snapshot of the current cache state. Non-blocking, always instant. */
-export function getCacheSnapshot(): DataCachePayload {
+/**
+ * Returns a snapshot of the current cache state.
+ *
+ * M5.1 – Now async: if the cache is cold or loading, awaits the in-flight (or
+ * newly started) preload before returning so that async Server Components get
+ * fully populated data on first paint — zero client-side fetch needed.
+ * If the cache is already ready or errored, returns immediately.
+ */
+export async function getCacheSnapshot(): Promise<DataCachePayload> {
+  // Await preload only when the cache hasn't settled yet (cold or mid-load).
+  if (state.status !== 'ready' && state.status !== 'error') {
+    await triggerPreload(false);
+  }
+
   return {
     status: state.status,
     tickers: state.tickers,
