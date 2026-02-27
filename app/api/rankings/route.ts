@@ -14,9 +14,11 @@ import { NextResponse } from 'next/server';
 import { getCacheSnapshot, triggerPreload } from '@/lib/dataCache';
 
 export async function GET() {
-  const snapshot = getCacheSnapshot();
+  // M5.1: getCacheSnapshot() is now async — it awaits the preload if needed.
+  const snapshot = await getCacheSnapshot();
 
-  // Auto-start preload if cache hasn't been populated yet
+  // Auto-start preload if cache hasn't been populated yet (redundant after M5.1
+  // since getCacheSnapshot() already triggers and awaits, but kept for safety).
   if (snapshot.status === 'cold') {
     void triggerPreload(false);
   }

@@ -33,9 +33,10 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Missing ticker parameter.' }, { status: 400 });
   }
 
-  const snapshot = getCacheSnapshot();
+  // M5.1: getCacheSnapshot() is now async — it awaits the preload if needed.
+  const snapshot = await getCacheSnapshot();
 
-  // Auto-warm the cache if cold
+  // Auto-warm the cache if cold (redundant after M5.1 but kept for safety).
   if (snapshot.status === 'cold') {
     void triggerPreload(false);
   }
