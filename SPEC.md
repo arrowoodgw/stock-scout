@@ -1,46 +1,94 @@
-# Stock Scout
+# Stock Scout SPEC v2.0 (February 2026)
 
 ## Goal
-A web app that tracks stock price performance and identifies potentially undervalued buys using fundamentals and price history.
+A web app that tracks stock price performance and identifies potentially undervalued buys using fundamentals, price history, and a transparent Value Score.  
+**New hard requirements for M5:**
+- All data + every calculated value (valueScore, scoreBreakdown, etc.) must be in the frontend **on first paint** (zero client-side fetch for the main rankings table).
+- Support scaling beyond Top 50 (target: Top 200 easily configurable).
+- Improve the Value Score based on the critique below while keeping it deterministic and pre-computed on the server.
 
-## Current Implementation Focus
+## Current State (M4 – live code)
+- Universe: static Top 50 in `src/universe/top50MarketCap.ts`
+- Data: full preload at startup (`instrumentation.ts` → `dataCache.triggerPreload()`)
+- Cache: singleton `EnrichedTicker[]` in `src/lib/dataCache.ts` (states: cold/loading/ready/error)
+- All calculations in `src/lib/valueScore.ts` (4 equal components: PE, PS, Revenue Growth, Operating Margin)
+- APIs (`/api/rankings`, `/api/ticker`) are cache-only
+- Frontend: still does client-side `fetch` on mount (the gap we are fixing)
 
-### Universe
-- Default universe is **Top 50 U.S. stocks by market cap**.
-- Source metadata is maintained in `src/universe/top50MarketCap.ts`:
-  - `tickers`
-  - `asOf` (currently `2026-02-17`)
-  - `source` (`CompaniesMarketCap (updated daily)`)
+## Value Score Critique (basis for M5.4)
+Strengths: clean, transparent, linear ramps, conservative (null/negative = 0).  
+Weaknesses to address:
+- No sector relativity (P/E 25 is cheap for banks, expensive for tech).
+- Equal weighting may undervalue growth/quality.
+- Linear ramps vs S-curve.
+- Missing FCF yield / balance sheet / momentum (keep simple for now).
 
-### Market data flow
-- Initial Home load fetches only `GET /api/market/universe-quotes`.
-- `/api/market/universe-quotes` fetches and caches quotes for only the Top 50 universe.
-- Universe quote cache:
-  - key: ticker -> `{ price, asOf, source }`
-  - TTL: 5–15 minutes (implemented: 10 minutes)
-  - concurrent refresh requests are coalesced.
+## M5 Milestones (implement sequentially)
 
-### Alpha Vantage constraints
-- Daily time series is per symbol; full daily history is fetched on-demand per ticker.
-- History cache stores full daily series per ticker and slices in memory for 1M/6M/1Y.
-- Range changes do not trigger new upstream calls while cache is valid.
-- For many-ticker current prices, app attempts Alpha Vantage batch quotes first, then fallback quotes for missing symbols.
+### M5.1 – Zero-Client-Fetch via React Server Components
+**Acceptance Criteria**
+- `app/page.tsx` (and any other main pages) is an async Server Component.
+- Calls new `getCacheSnapshot()` that awaits preload if needed.
+- Passes `{ initialData: EnrichedTicker[], lastUpdated: string }` to a `'use client'` component (e.g. `RankingsClient`).
+- Client component uses `useState(initialData)` – **no fetch/SWR on mount**.
+- Loading state only shows if cache is still cold (very brief on cold start).
+- All existing sorting/filtering still works on the in-memory array.
+- Other pages (ticker detail, portfolio) updated the same way where possible.
 
-### Fundamentals (SEC)
-- Uses `SecFundamentalsDataProvider`.
-- Fundamentals are fetched on-demand per ticker/company facts and cached for 24h.
-- Ticker-to-CIK mapping is cached in-memory.
-- SEC requests require `SEC_USER_AGENT`.
+**Files to change**
+- `src/lib/dataCache.ts` (add `getCacheSnapshot()`)
+- `app/page.tsx`
+- Any client components that currently fetch `/api/rankings` on mount
+- Update README with new architecture note
 
-### Portfolio (local)
-- “Buy” action stores trades with:
-  - `{ ticker, shares, priceAtBuy, date, valueScoreAtBuy }`
-- Primary storage: `/data/portfolio.json` when filesystem is available.
-- Fallback storage: browser `localStorage`.
-- Portfolio page computes current value using cached universe quotes.
+### M5.2 – Persistent Cache Snapshot
+**Acceptance Criteria**
+- After successful preload, write full snapshot to `data/cache-snapshot.json` (gitignored).
+- On cold start, attempt to load snapshot first (instant "ready" state), then refresh in background.
+- Add `CACHE_SNAPSHOT_ENABLED=true` env var (default true).
 
-## Environment Variables
-- `DATA_MODE=mock|real`
-- `NEXT_PUBLIC_DATA_MODE=mock|real`
-- `ALPHAVANTAGE_API_KEY` (required for real market data)
-- `SEC_USER_AGENT` (required for SEC company facts)
+**Files to change**
+- `src/lib/dataCache.ts`
+- (optional) `.gitignore`
+
+### M5.3 – Dynamic Top-N Universe (200+ stocks)
+**Acceptance Criteria**
+- Replace static `top50MarketCap.ts` with `getTopNMarketCap(n: number)` (default 200).
+- Support `UNIVERSE_SIZE` env var (default 200).
+- Provide an updated ticker list for Top 200 (or a script to generate it).
+- Preload still completes in reasonable time (Polygon grouped-daily handles 500+ easily; SEC is the bottleneck – note it).
+- Rankings page shows "Top {universeSize} by Value Score".
+
+**Files to change**
+- `src/universe/` (new or refactored file)
+- `src/lib/dataCache.ts`
+- `app/page.tsx` (use the new size in title)
+- Add Top-200 ticker array (I can provide it if needed)
+
+### M5.4 – Value Score v2 (sector-relative + weights)
+**Acceptance Criteria**
+- Keep backward-compatible (existing scores unchanged unless opted in).
+- Add optional sector-relative adjustment for PE and Margin (hardcoded sector medians map is fine).
+- Make component weights configurable via a const object in `valueScore.ts` (or env).
+- Add `scoreVersion: "v1" | "v2"` to `EnrichedTicker`.
+- Update breakdown display to show the new logic.
+- Keep all calculations server-side only.
+
+**Files to change**
+- `src/lib/valueScore.ts`
+- `src/types/index.ts`
+- (optional) UI to show "v2" badge or tooltip
+
+## Non-goals for M5
+- Real database (Supabase etc.)
+- Forward estimates
+- User-defined universes
+- New data providers (FMP etc.) – keep Polygon + SEC for now
+
+## Implementation Rules
+- Preserve all existing behavior when flags are off/default.
+- Add clear comments referencing this SPEC.
+- No breaking changes to portfolio or out-of-universe tickers.
+- Test in both `DATA_MODE=mock` and `real`.
+
+Implement one milestone at a time. After each, run `npm run dev`, verify the acceptance criteria, then commit with message "M5.X – description".
