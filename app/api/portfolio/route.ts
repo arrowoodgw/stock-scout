@@ -6,7 +6,7 @@ import { EnrichedPortfolioHolding } from '@/types';
 export async function GET() {
   try {
     const portfolio = await readPortfolio();
-    const cache = getCacheSnapshot();
+    const cache = await getCacheSnapshot();
 
     // Build a ticker -> latestPrice lookup from cache
     const priceMap = new Map<string, number>();
