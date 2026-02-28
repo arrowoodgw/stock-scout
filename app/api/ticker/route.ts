@@ -15,7 +15,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getCacheSnapshot, triggerPreload } from '@/lib/dataCache';
-import { calculateValueScore } from '@/lib/valueScore';
+import { calculateValueScore, TICKER_SECTOR_MAP } from '@/lib/valueScore';
 import { EnrichedTicker } from '@/types';
 
 // We re-use the existing fundamentals + stock providers for out-of-universe tickers
@@ -79,11 +79,20 @@ export async function GET(request: NextRequest) {
         ? marketCap / fundamentalsRaw.revenueTtm
         : fundamentalsRaw.ps;
 
-    const { total: valueScore, breakdown: scoreBreakdown } = calculateValueScore({
+    // M5.4 – sector lookup for v2 sector-relative scoring (null for out-of-universe tickers)
+    const sector = TICKER_SECTOR_MAP[ticker] ?? null;
+
+    const {
+      total: valueScore,
+      breakdown: scoreBreakdown,
+      scoreVersion,
+      weights: scoreWeights,
+    } = calculateValueScore({
       peTtm,
       ps,
       revenueGrowthYoY: fundamentalsRaw.revenueGrowthYoY,
-      operatingMargin: fundamentalsRaw.operatingMargin
+      operatingMargin: fundamentalsRaw.operatingMargin,
+      sector,
     });
 
     const enriched: EnrichedTicker = {
@@ -99,6 +108,9 @@ export async function GET(request: NextRequest) {
       operatingMargin: fundamentalsRaw.operatingMargin,
       valueScore,
       scoreBreakdown,
+      scoreVersion,
+      scoreWeights,
+      sector,
       fundamentalsAsOf: fundamentalsRaw.asOf
     };
 
