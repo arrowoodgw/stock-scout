@@ -79,6 +79,11 @@ type CacheState = {
   error: string | undefined;
 };
 
+type CacheSnapshotFile = {
+  tickers: EnrichedTicker[];
+  lastUpdated: string;
+};
+
 const state: CacheState = {
   status: 'cold',
   tickers: [],
@@ -88,6 +93,7 @@ const state: CacheState = {
 
 /** True while a preload is in progress — prevents concurrent preloads. */
 let preloadInFlight: Promise<void> | null = null;
+const snapshotPath = path.join(process.cwd(), 'data', 'cache', 'rankings-snapshot.json');
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -136,6 +142,11 @@ export function triggerPreload(forceRefresh = false): Promise<void> {
   return preloadInFlight;
 }
 
+/** Force a fresh cache refresh (used by cron and manual admin refresh flows). */
+export function triggerRefresh(): Promise<void> {
+  return triggerPreload(true);
+}
+
 // ---------------------------------------------------------------------------
 // Preload pipeline
 // ---------------------------------------------------------------------------
@@ -156,13 +167,29 @@ async function runPreload(): Promise<void> {
     // Step 3–7 — fetch SEC fundamentals per ticker, enrich, and score
     const enriched = await enrichAllTickers(tickers, secMap, quotes);
 
+    const refreshedAt = new Date().toISOString();
+
+    await writeSnapshotFile({
+      tickers: enriched,
+      lastUpdated: refreshedAt
+    });
+
     state.tickers = enriched;
-    state.lastUpdated = new Date().toISOString();
+    state.lastUpdated = refreshedAt;
     state.status = 'ready';
   } catch (err) {
     state.status = 'error';
     state.error = err instanceof Error ? err.message : 'Preload failed.';
   }
+}
+
+async function writeSnapshotFile(snapshot: CacheSnapshotFile): Promise<void> {
+  const dir = path.dirname(snapshotPath);
+  const tmpPath = `${snapshotPath}.tmp`;
+
+  await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(tmpPath, JSON.stringify(snapshot), 'utf8');
+  await fs.rename(tmpPath, snapshotPath);
 }
 
 // ---------------------------------------------------------------------------

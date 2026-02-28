@@ -9,10 +9,10 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getCacheSnapshot, triggerPreload } from '@/lib/dataCache';
+import { getCacheSnapshot, triggerPreload, triggerRefresh } from '@/lib/dataCache';
 
 export async function GET() {
-  return NextResponse.json(getCacheSnapshot());
+  return NextResponse.json(await getCacheSnapshot());
 }
 
 export async function POST(request: NextRequest) {
@@ -20,7 +20,11 @@ export async function POST(request: NextRequest) {
 
   // Fire-and-forget: don't block the response waiting for all 50 SEC calls.
   // The client can poll GET /api/preload for status, or GET /api/rankings.
-  void triggerPreload(forceRefresh);
+  if (forceRefresh) {
+    void triggerRefresh();
+  } else {
+    void triggerPreload(false);
+  }
 
   return NextResponse.json({ started: true, forceRefresh });
 }
