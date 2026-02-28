@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { readPortfolio, writePortfolio } from '@/lib/portfolio';
 
+const MAX_TICKER_LEN = 10;
+const MAX_NAME_LEN = 200;
+
 export async function POST(request: NextRequest) {
   try {
     const body = (await request.json()) as {
@@ -17,6 +20,14 @@ export async function POST(request: NextRequest) {
 
     if (!ticker) {
       return NextResponse.json({ error: 'Missing ticker.' }, { status: 400 });
+    }
+
+    if (ticker.length > MAX_TICKER_LEN) {
+      return NextResponse.json({ error: 'ticker is too long.' }, { status: 400 });
+    }
+
+    if (companyName.length > MAX_NAME_LEN) {
+      return NextResponse.json({ error: 'companyName is too long.' }, { status: 400 });
     }
 
     if (!Number.isFinite(shares) || shares < 1) {
