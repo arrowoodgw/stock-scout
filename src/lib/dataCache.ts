@@ -25,7 +25,7 @@
 import { promises as fs } from 'fs';
 import path from 'path';
 import { top50MarketCap } from '@/universe/top50MarketCap';
-import { calculateValueScore } from '@/lib/valueScore';
+import { calculateValueScore, TICKER_SECTOR_MAP } from '@/lib/valueScore';
 import { CacheStatus, DataCachePayload, EnrichedTicker } from '@/types';
 
 // ---------------------------------------------------------------------------
@@ -561,12 +561,22 @@ async function enrichAllTickers(
         ? marketCap / facts.revenueTtm
         : null;
 
-    // Score calculation — happens here, once, never at render time
-    const { total: valueScore, breakdown: scoreBreakdown } = calculateValueScore({
+    // M5.4 – resolve the ticker's sector for optional v2 sector-relative scoring
+    const sector = TICKER_SECTOR_MAP[ticker] ?? null;
+
+    // Score calculation — happens here, once, never at render time.
+    // `sector` is only used when SCORE_VERSION === "v2"; ignored in v1.
+    const {
+      total: valueScore,
+      breakdown: scoreBreakdown,
+      scoreVersion,
+      weights: scoreWeights,
+    } = calculateValueScore({
       peTtm,
       ps,
       revenueGrowthYoY: facts.revenueGrowthYoY,
-      operatingMargin: facts.operatingMargin
+      operatingMargin: facts.operatingMargin,
+      sector,
     });
 
     results.push({
@@ -582,6 +592,9 @@ async function enrichAllTickers(
       operatingMargin: facts.operatingMargin,
       valueScore,
       scoreBreakdown,
+      scoreVersion,
+      scoreWeights,
+      sector,
       fundamentalsAsOf: facts.asOf
     });
   }
