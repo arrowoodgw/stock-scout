@@ -14,7 +14,7 @@
  * trips for those interactions.
  */
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { CacheStatus, EnrichedTicker } from '@/types';
 import { currencyFormatter, formatLargeCurrency, numberFormatter } from '@/utils/formatters';
 
@@ -49,7 +49,11 @@ async function fetchRankings(): Promise<{ tickers: EnrichedTicker[]; lastUpdated
 }
 
 async function triggerRefresh(): Promise<void> {
-  await fetch('/api/preload?refresh=1', { method: 'POST', cache: 'no-store' });
+  const response = await fetch('/api/preload?refresh=1', { method: 'POST', cache: 'no-store' });
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => ({}))) as { error?: string };
+    throw new Error(payload.error ?? 'Could not trigger refresh.');
+  }
 }
 
 async function postBuy(ticker: string, shares: number, purchasePrice: number): Promise<void> {
@@ -64,6 +68,19 @@ async function postBuy(ticker: string, shares: number, purchasePrice: number): P
   }
 }
 
+function getDataAgeLabel(lastUpdatedAt: string | null, nowMs: number): string {
+  if (!lastUpdatedAt) return 'Data age: unavailable';
+  const updatedMs = Date.parse(lastUpdatedAt);
+  if (Number.isNaN(updatedMs)) return 'Data age: unavailable';
+
+  const deltaMs = Math.max(0, nowMs - updatedMs);
+  const minutes = Math.floor(deltaMs / 60_000);
+  if (minutes < 1) return 'Data age: <1 min';
+  if (minutes < 60) return `Data age: ${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  return `Data age: ${hours}h ${minutes % 60}m`;
+}
+
 export default function RankingsClient({ initialData, lastUpdated, initialStatus, initialError }: RankingsClientProps) {
   // M5.1: seeded from server — no fetch on mount
   const [tickers, setTickers] = useState<EnrichedTicker[]>(initialData);
@@ -73,6 +90,8 @@ export default function RankingsClient({ initialData, lastUpdated, initialStatus
 
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
+  const [refreshToast, setRefreshToast] = useState<string | null>(null);
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
 
   const [query, setQuery] = useState('');
   const [sortBy, setSortBy] = useState<SortField>('valueScore');
@@ -81,6 +100,19 @@ export default function RankingsClient({ initialData, lastUpdated, initialStatus
   const [buyShares, setBuyShares] = useState(1);
   const [isBuying, setIsBuying] = useState(false);
   const [buySuccess, setBuySuccess] = useState<string | null>(null);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setNowMs(Date.now());
+    }, 60_000);
+    return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    if (!refreshToast) return;
+    const timeout = setTimeout(() => setRefreshToast(null), 3_000);
+    return () => clearTimeout(timeout);
+  }, [refreshToast]);
 
   // Polls /api/rankings until the cache is ready after a user-triggered refresh.
   const pollUntilReady = useCallback(async () => {
@@ -95,6 +127,8 @@ export default function RankingsClient({ initialData, lastUpdated, initialStatus
         setTimeout(() => void pollUntilReady(), POLL_INTERVAL_MS);
       } else {
         setIsRefreshing(false);
+        setNowMs(Date.now());
+        setRefreshToast('✅ Data refresh completed.');
       }
     } catch (err) {
       setFetchError(err instanceof Error ? err.message : 'Could not load rankings.');
@@ -105,10 +139,12 @@ export default function RankingsClient({ initialData, lastUpdated, initialStatus
   const handleRefresh = async () => {
     setIsRefreshing(true);
     setFetchError(null);
+    setRefreshToast(null);
     try {
       await triggerRefresh();
       await pollUntilReady();
-    } catch {
+    } catch (err) {
+      setFetchError(err instanceof Error ? err.message : 'Could not trigger refresh.');
       setIsRefreshing(false);
     }
   };
@@ -152,6 +188,7 @@ export default function RankingsClient({ initialData, lastUpdated, initialStatus
 
   const isCacheLoading = cacheStatus === 'loading' || cacheStatus === 'cold';
   const isCacheError = cacheStatus === 'error';
+  const dataAgeLabel = getDataAgeLabel(lastUpdatedAt, nowMs);
   // Show the table whenever we have data, even while a refresh is in flight
   const showTable = tickers.length > 0;
 
@@ -179,20 +216,29 @@ export default function RankingsClient({ initialData, lastUpdated, initialStatus
               <option value="marketCap">Market Cap (desc)</option>
             </select>
           </label>
-          <button
-            type="button"
-            onClick={() => void handleRefresh()}
-            disabled={isRefreshing || isCacheLoading}
-          >
-            {isRefreshing ? 'Refreshing\u2026' : 'Refresh data'}
-          </button>
+          <div className="refreshGroup">
+            <button
+              type="button"
+              onClick={() => void handleRefresh()}
+              disabled={isRefreshing || isCacheLoading}
+            >
+              {isRefreshing ? (
+                <span className="btnInlineStatus">
+                  <span className="spinner" aria-hidden="true" />
+                  Refreshing data...
+                </span>
+              ) : 'Refresh Data Now'}
+            </button>
+            <span className="dataAgeBadge" aria-live="polite">{dataAgeLabel}</span>
+          </div>
         </div>
 
+        {refreshToast ? <p className="status success">{refreshToast}</p> : null}
         {lastUpdatedAt ? (
           <p className="status">Data as of {new Date(lastUpdatedAt).toLocaleString()}</p>
         ) : null}
 
-        {isCacheLoading ? <p className="status">Loading\u2014pre-calculating scores for all 50 tickers\u2026</p> : null}
+        {isCacheLoading ? <p className="status">Loading—pre-calculating scores for all 50 tickers…</p> : null}
         {fetchError ? <p className="status error">{fetchError}</p> : null}
         {isCacheError ? <p className="status error">Cache error: {cacheError ?? 'Unknown error.'}</p> : null}
 
@@ -217,14 +263,14 @@ export default function RankingsClient({ initialData, lastUpdated, initialStatus
                 {filteredRows.map((row) => (
                   <tr key={row.ticker}>
                     <td><strong>{row.ticker}</strong></td>
-                    <td>{row.companyName ?? '\u2014'}</td>
+                    <td>{row.companyName ?? '—'}</td>
                     <td>{row.valueScore}/100</td>
-                    <td>{row.marketCap === null ? '\u2014' : formatLargeCurrency(row.marketCap)}</td>
-                    <td>{row.peTtm === null ? '\u2014' : numberFormatter.format(row.peTtm)}</td>
-                    <td>{row.ps === null ? '\u2014' : numberFormatter.format(row.ps)}</td>
-                    <td>{row.revenueGrowthYoY === null ? '\u2014' : `${row.revenueGrowthYoY.toFixed(1)}%`}</td>
-                    <td>{row.operatingMargin === null ? '\u2014' : `${row.operatingMargin.toFixed(1)}%`}</td>
-                    <td>{row.latestPrice === null ? '\u2014' : currencyFormatter.format(row.latestPrice)}</td>
+                    <td>{row.marketCap === null ? '—' : formatLargeCurrency(row.marketCap)}</td>
+                    <td>{row.peTtm === null ? '—' : numberFormatter.format(row.peTtm)}</td>
+                    <td>{row.ps === null ? '—' : numberFormatter.format(row.ps)}</td>
+                    <td>{row.revenueGrowthYoY === null ? '—' : `${row.revenueGrowthYoY.toFixed(1)}%`}</td>
+                    <td>{row.operatingMargin === null ? '—' : `${row.operatingMargin.toFixed(1)}%`}</td>
+                    <td>{row.latestPrice === null ? '—' : currencyFormatter.format(row.latestPrice)}</td>
                     <td>
                       {row.latestPrice !== null ? (
                         <button

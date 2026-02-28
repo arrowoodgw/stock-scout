@@ -204,6 +204,10 @@ body {
   color: var(--negative);
 }
 
+.status.success {
+  color: var(--positive);
+}
+
 /* ── Price card ─────────────────────────────────────────────────────────── */
 
 .priceCard {
@@ -570,6 +574,45 @@ body {
 .toolbar button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.refreshGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  align-self: flex-end;
+}
+
+.dataAgeBadge {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  background: var(--surface-alt);
+  border-radius: 999px;
+  padding: 0.2rem 0.55rem;
+  width: fit-content;
+}
+
+.btnInlineStatus {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.spinner {
+  width: 0.9rem;
+  height: 0.9rem;
+  border-radius: 999px;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #ffffff;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* ── Table ──────────────────────────────────────────────────────────────── */

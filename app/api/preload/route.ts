@@ -16,6 +16,12 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
+  const requireAdmin = (process.env.PRELOAD_REQUIRE_ADMIN ?? '').trim() === '1';
+  const isAdmin = request.nextUrl.searchParams.get('admin') === '1';
+  if (requireAdmin && !isAdmin) {
+    return NextResponse.json({ error: 'Forbidden.' }, { status: 403 });
+  }
+
   const forceRefresh = request.nextUrl.searchParams.get('refresh') === '1';
 
   // Fire-and-forget: don't block the response waiting for all 50 SEC calls.

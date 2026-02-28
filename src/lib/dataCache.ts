@@ -147,6 +147,15 @@ export function triggerRefresh(): Promise<void> {
   return triggerPreload(true);
 }
 
+/** Returns the cache age in whole minutes, or null if cache has never been populated. */
+export function getCacheAgeMinutes(now = new Date()): number | null {
+  if (!state.lastUpdated) return null;
+  const lastUpdatedMs = Date.parse(state.lastUpdated);
+  if (Number.isNaN(lastUpdatedMs)) return null;
+  const diffMs = Math.max(0, now.getTime() - lastUpdatedMs);
+  return Math.floor(diffMs / 60_000);
+}
+
 // ---------------------------------------------------------------------------
 // Preload pipeline
 // ---------------------------------------------------------------------------
