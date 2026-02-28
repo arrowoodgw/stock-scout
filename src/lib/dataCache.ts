@@ -84,6 +84,8 @@ type CacheSnapshotFile = {
   lastUpdated: string;
 };
 
+type PreloadLogLevel = 'info' | 'error';
+
 const state: CacheState = {
   status: 'cold',
   tickers: [],
@@ -94,6 +96,23 @@ const state: CacheState = {
 /** True while a preload is in progress — prevents concurrent preloads. */
 let preloadInFlight: Promise<void> | null = null;
 const snapshotPath = path.join(process.cwd(), 'data', 'cache', 'rankings-snapshot.json');
+
+function logPreloadEvent(level: PreloadLogLevel, event: string, details: Record<string, unknown> = {}): void {
+  const payload = {
+    ts: new Date().toISOString(),
+    level,
+    source: 'dataCache',
+    event,
+    ...details
+  };
+
+  if (level === 'error') {
+    console.error(JSON.stringify(payload));
+    return;
+  }
+
+  console.log(JSON.stringify(payload));
+}
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -128,10 +147,17 @@ export async function getCacheSnapshot(): Promise<DataCachePayload> {
  */
 export function triggerPreload(forceRefresh = false): Promise<void> {
   if (!forceRefresh && state.status === 'ready') {
+    logPreloadEvent('info', 'preload.skip_already_ready', {
+      status: state.status,
+      lastUpdated: state.lastUpdated
+    });
     return Promise.resolve();
   }
 
   if (preloadInFlight) {
+    logPreloadEvent('info', 'preload.join_in_flight', {
+      status: state.status
+    });
     return preloadInFlight;
   }
 
@@ -156,13 +182,35 @@ export function getCacheAgeMinutes(now = new Date()): number | null {
   return Math.floor(diffMs / 60_000);
 }
 
+export function getCacheHealth() {
+  return {
+    status: state.status,
+    lastUpdated: state.lastUpdated,
+    universeSize: state.tickers.length,
+    scoreVersion: 'v2' as const,
+    dataMode: isRealMode() ? 'real' : 'mock',
+    cacheState: {
+      status: state.status,
+      error: state.error ?? null,
+      inFlight: preloadInFlight !== null
+    }
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Preload pipeline
 // ---------------------------------------------------------------------------
 
 async function runPreload(): Promise<void> {
+  const startedAtMs = Date.now();
+
   state.status = 'loading';
   state.error = undefined;
+
+  logPreloadEvent('info', 'preload.started', {
+    tickerTarget: top50MarketCap.tickers.length,
+    dataMode: isRealMode() ? 'real' : 'mock'
+  });
 
   try {
     const tickers = [...top50MarketCap.tickers];
@@ -186,9 +234,20 @@ async function runPreload(): Promise<void> {
     state.tickers = enriched;
     state.lastUpdated = refreshedAt;
     state.status = 'ready';
+
+    logPreloadEvent('info', 'preload.succeeded', {
+      durationMs: Date.now() - startedAtMs,
+      tickerCount: enriched.length,
+      lastUpdated: refreshedAt
+    });
   } catch (err) {
     state.status = 'error';
     state.error = err instanceof Error ? err.message : 'Preload failed.';
+
+    logPreloadEvent('error', 'preload.failed', {
+      durationMs: Date.now() - startedAtMs,
+      error: state.error
+    });
   }
 }
 
