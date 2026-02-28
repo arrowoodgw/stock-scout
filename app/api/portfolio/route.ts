@@ -3,6 +3,11 @@ import { readPortfolio, writePortfolio } from '@/lib/portfolio';
 import { getCacheSnapshot } from '@/lib/dataCache';
 import { EnrichedPortfolioHolding } from '@/types';
 
+const MAX_TICKER_LEN = 10;
+const MAX_NAME_LEN = 200;
+const MAX_NOTES_LEN = 1000;
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
 export async function GET() {
   try {
     const portfolio = await readPortfolio();
@@ -55,11 +60,27 @@ export async function POST(request: NextRequest) {
     const companyName = typeof body.companyName === 'string' ? body.companyName.trim() : '';
     const shares = Number(body.shares);
     const purchasePrice = Number(body.purchasePrice);
-    const purchaseDate = typeof body.purchaseDate === 'string' ? body.purchaseDate.trim() : new Date().toISOString().split('T')[0];
-    const notes = typeof body.notes === 'string' && body.notes.trim() ? body.notes.trim() : undefined;
+    const rawDate = typeof body.purchaseDate === 'string' ? body.purchaseDate.trim() : '';
+    const purchaseDate = rawDate && ISO_DATE_RE.test(rawDate)
+      ? rawDate
+      : new Date().toISOString().split('T')[0];
+    const notesRaw = typeof body.notes === 'string' ? body.notes.trim() : '';
+    const notes = notesRaw || undefined;
 
     if (!ticker) {
       return NextResponse.json({ error: 'Missing ticker.' }, { status: 400 });
+    }
+
+    if (ticker.length > MAX_TICKER_LEN) {
+      return NextResponse.json({ error: 'ticker is too long.' }, { status: 400 });
+    }
+
+    if (companyName.length > MAX_NAME_LEN) {
+      return NextResponse.json({ error: 'companyName is too long.' }, { status: 400 });
+    }
+
+    if (notes && notes.length > MAX_NOTES_LEN) {
+      return NextResponse.json({ error: 'notes is too long.' }, { status: 400 });
     }
 
     if (!Number.isFinite(shares) || shares <= 0) {

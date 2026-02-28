@@ -8,8 +8,26 @@
  * they call /api/rankings which reads from the already-populated cache.
  */
 
+import { timingSafeEqual } from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { getCacheSnapshot, triggerPreload, triggerRefresh } from '@/lib/dataCache';
+
+function isAuthorizedAdmin(request: NextRequest): boolean {
+  const secret = process.env.CRON_SECRET?.trim();
+  if (!secret) return false;
+
+  const authHeader = request.headers.get('authorization') ?? '';
+  const expected = `Bearer ${secret}`;
+
+  try {
+    const a = Buffer.from(authHeader);
+    const b = Buffer.from(expected);
+    if (a.length !== b.length) return false;
+    return timingSafeEqual(a, b);
+  } catch {
+    return false;
+  }
+}
 
 export async function GET() {
   return NextResponse.json(await getCacheSnapshot());
@@ -17,8 +35,7 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   const requireAdmin = (process.env.PRELOAD_REQUIRE_ADMIN ?? '').trim() === '1';
-  const isAdmin = request.nextUrl.searchParams.get('admin') === '1';
-  if (requireAdmin && !isAdmin) {
+  if (requireAdmin && !isAuthorizedAdmin(request)) {
     return NextResponse.json({ error: 'Forbidden.' }, { status: 403 });
   }
 

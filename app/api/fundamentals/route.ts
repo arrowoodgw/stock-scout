@@ -6,8 +6,12 @@ const fundamentalsProvider = getFundamentalsDataProvider();
 const stockProvider = getStockDataProvider();
 
 export async function GET(request: NextRequest) {
-  const ticker = request.nextUrl.searchParams.get('ticker') ?? '';
+  const ticker = (request.nextUrl.searchParams.get('ticker') ?? '').trim().toUpperCase();
   const forceRefresh = request.nextUrl.searchParams.get('refresh') === '1';
+
+  if (!ticker) {
+    return NextResponse.json({ error: 'Missing ticker parameter.' }, { status: 400 });
+  }
 
   try {
     const [fundamentalsRaw, universeQuotes] = await Promise.all([
@@ -22,7 +26,7 @@ export async function GET(request: NextRequest) {
 
     // Prefer the cached universe quote price; fall back to a direct Polygon call only for
     // tickers not in the universe (e.g. a user typed a ticker manually in Ticker Detail).
-    const universePrice = universeQuotes?.[ticker.trim().toUpperCase()]?.price ?? null;
+    const universePrice = universeQuotes?.[ticker]?.price ?? null;
     let price: number | null = universePrice;
 
     if (price === null) {
@@ -47,13 +51,10 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(fundamentals);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Could not load fundamentals.';
-    const status =
-      message.includes('Invalid') || message.includes('Please provide')
-        ? 400
-        : message.includes('Missing SEC_USER_AGENT')
-          ? 500
-          : 502;
-
+    if (message.includes('Missing SEC_USER_AGENT')) {
+      return NextResponse.json({ error: 'Service configuration error.' }, { status: 500 });
+    }
+    const status = message.includes('Invalid') || message.includes('Please provide') ? 400 : 502;
     return NextResponse.json({ error: message }, { status });
   }
 }
