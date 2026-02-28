@@ -2,6 +2,7 @@
  * app/page.tsx
  *
  * M5.1 – Async React Server Component (no 'use client').
+ * M5.3 – Reads UNIVERSE_SIZE env var and passes it to RankingsClient for the title.
  *
  * Calls getCacheSnapshot() which awaits the preload if the cache is still
  * warming up, then passes the fully enriched dataset to RankingsClient as
@@ -13,6 +14,7 @@
  */
 
 import { getCacheSnapshot } from '@/lib/dataCache';
+import { getUniverseSize } from '@/universe/tickerUniverse';
 import RankingsClient from '@/components/RankingsClient';
 
 export default async function RankingsPage() {
@@ -21,12 +23,16 @@ export default async function RankingsPage() {
   // this joins that promise — no duplicate work.
   const snapshot = await getCacheSnapshot();
 
+  // M5.3: read once on the server so the title always matches the actual universe.
+  const universeSize = getUniverseSize();
+
   return (
     <RankingsClient
       initialData={snapshot.tickers}
       lastUpdated={snapshot.lastUpdated}
       initialStatus={snapshot.status}
       initialError={snapshot.error}
+      universeSize={universeSize}
     />
   );
 }

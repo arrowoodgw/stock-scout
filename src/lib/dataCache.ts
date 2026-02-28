@@ -34,7 +34,8 @@
 
 import { promises as fs } from 'fs';
 import path from 'path';
-import { top50MarketCap } from '@/universe/top50MarketCap';
+// M5.3: use the new dynamic universe instead of the static top-50 list.
+import { getTopNMarketCap, getUniverseSize } from '@/universe/tickerUniverse';
 import { calculateValueScore } from '@/lib/valueScore';
 import { CacheStatus, DataCachePayload, EnrichedTicker } from '@/types';
 
@@ -226,7 +227,8 @@ async function runLivePreload(silent = false): Promise<void> {
   }
 
   try {
-    const tickers = [...top50MarketCap.tickers];
+    // M5.3: size is read fresh each run so UNIVERSE_SIZE changes take effect on refresh.
+    const tickers = getTopNMarketCap(getUniverseSize());
 
     // Step 1 — load SEC CIK map for company names and CIKs
     const secMap = await loadSecCikMap();

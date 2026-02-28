@@ -34,6 +34,8 @@ type RankingsClientProps = {
   initialStatus: CacheStatus;
   /** Error message when initialStatus === 'error'. */
   initialError?: string;
+  /** M5.3: number of tickers in the active universe (from UNIVERSE_SIZE env var). */
+  universeSize: number;
 };
 
 /** Poll interval while a user-triggered refresh is in progress (ms). */
@@ -64,7 +66,7 @@ async function postBuy(ticker: string, shares: number, purchasePrice: number): P
   }
 }
 
-export default function RankingsClient({ initialData, lastUpdated, initialStatus, initialError }: RankingsClientProps) {
+export default function RankingsClient({ initialData, lastUpdated, initialStatus, initialError, universeSize }: RankingsClientProps) {
   // M5.1: seeded from server — no fetch on mount
   const [tickers, setTickers] = useState<EnrichedTicker[]>(initialData);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<string | null>(lastUpdated);
@@ -160,7 +162,8 @@ export default function RankingsClient({ initialData, lastUpdated, initialStatus
       <section className="card wideCard">
         <header className="header">
           <h1>Rankings</h1>
-          <p>Top 50 market-cap universe ranked by pre-calculated Value Score.</p>
+          {/* M5.3: title reflects the active UNIVERSE_SIZE */}
+          <p>Top {universeSize} by market cap — ranked by pre-calculated Value Score.</p>
         </header>
 
         <div className="toolbar">
