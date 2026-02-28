@@ -10,3 +10,4 @@ pnpm-debug.log*
 !.env.local.example
 tsconfig.tsbuildinfo
 data/portfolio.json
+data/cache-snapshot.json

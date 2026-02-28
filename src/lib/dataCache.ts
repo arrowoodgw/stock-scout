@@ -10,6 +10,16 @@
  * • Pages and routes call getCacheSnapshot() to read — they never fetch or calculate.
  * • A manual refresh repopulates the cache from scratch (forceRefresh=true).
  *
+ * M5.2 – Persistent Cache Snapshot
+ * ──────────────────────────────────
+ * • After every successful live preload, the full dataset is written to
+ *   data/cache-snapshot.json (gitignored) via writeSnapshot().
+ * • On the next cold start, tryLoadSnapshot() reads that file first so the
+ *   cache is immediately 'ready' — then a silent background refresh runs via
+ *   runLivePreload(silent=true) to freshen the data without flipping the
+ *   visible status back to 'loading'.
+ * • Controlled by CACHE_SNAPSHOT_ENABLED env var (default: true).
+ *
  * Data pipeline (runs at preload time only)
  * ──────────────────────────────────────────
  * 1. Load sec_cik_map.json → company name per ticker
@@ -86,8 +96,29 @@ const state: CacheState = {
   error: undefined
 };
 
-/** True while a preload is in progress — prevents concurrent preloads. */
+/** True while a foreground preload is in progress — prevents concurrent preloads. */
 let preloadInFlight: Promise<void> | null = null;
+
+// ---------------------------------------------------------------------------
+// M5.2 – Persistent snapshot config
+// ---------------------------------------------------------------------------
+
+/** Absolute path to the on-disk snapshot file (gitignored). */
+const SNAPSHOT_PATH = path.join(process.cwd(), 'data', 'cache-snapshot.json');
+
+/**
+ * Returns true when snapshot persistence is enabled.
+ * Disable by setting CACHE_SNAPSHOT_ENABLED=false in .env.local.
+ */
+function isSnapshotEnabled(): boolean {
+  return (process.env.CACHE_SNAPSHOT_ENABLED ?? 'true').toLowerCase() !== 'false';
+}
+
+/**
+ * Tracks the silent background live-refresh that runs after a snapshot is loaded.
+ * Separate from preloadInFlight so the foreground caller returns immediately.
+ */
+let backgroundRefreshInFlight: Promise<void> | null = null;
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -119,6 +150,9 @@ export async function getCacheSnapshot(): Promise<DataCachePayload> {
  * Trigger a cache preload.
  * If a preload is already in flight, returns the same promise (no double-fetch).
  * If `forceRefresh` is true, always starts a fresh load even if cache is ready.
+ *
+ * M5.2: forceRefresh is now forwarded to runPreload() so the snapshot fast-path
+ * is skipped during explicit user-initiated refreshes.
  */
 export function triggerPreload(forceRefresh = false): Promise<void> {
   if (!forceRefresh && state.status === 'ready') {
@@ -129,7 +163,7 @@ export function triggerPreload(forceRefresh = false): Promise<void> {
     return preloadInFlight;
   }
 
-  preloadInFlight = runPreload().finally(() => {
+  preloadInFlight = runPreload(forceRefresh).finally(() => {
     preloadInFlight = null;
   });
 
@@ -140,9 +174,56 @@ export function triggerPreload(forceRefresh = false): Promise<void> {
 // Preload pipeline
 // ---------------------------------------------------------------------------
 
-async function runPreload(): Promise<void> {
-  state.status = 'loading';
-  state.error = undefined;
+/**
+ * M5.2 orchestrator — called by triggerPreload().
+ *
+ * Cold start (forceRefresh=false):
+ *   1. Try to hydrate from data/cache-snapshot.json (instant 'ready').
+ *   2. If successful, schedule a silent background live refresh so the next
+ *      getCacheSnapshot() still returns immediately with the snapshot data
+ *      while the refresh runs quietly in the background.
+ *   3. If no snapshot found, fall through to a full live preload.
+ *
+ * Forced refresh (forceRefresh=true):
+ *   Skip the snapshot and run a full live preload.
+ */
+async function runPreload(forceRefresh = false): Promise<void> {
+  // M5.2: Fast path — try the on-disk snapshot on a genuine cold start.
+  if (!forceRefresh && state.status === 'cold' && isSnapshotEnabled()) {
+    const loaded = await tryLoadSnapshot();
+    if (loaded) {
+      // Snapshot hydrated — kick off a silent background refresh if none is
+      // already running, then return immediately so the caller gets 'ready'.
+      if (!backgroundRefreshInFlight) {
+        backgroundRefreshInFlight = runLivePreload(true).finally(() => {
+          backgroundRefreshInFlight = null;
+        });
+      }
+      return;
+    }
+    // No snapshot (or corrupt) — fall through to a full blocking live preload.
+  }
+
+  // Standard path: block until data is fetched and scored.
+  await runLivePreload(false);
+}
+
+/**
+ * Runs the full data-fetch-and-score pipeline.
+ *
+ * silent=false (default): sets status→'loading', then 'ready'/'error'.
+ *   Used on cold starts without a snapshot and on forced refreshes.
+ *
+ * silent=true (M5.2 background refresh): does NOT flip status to 'loading',
+ *   so the UI continues to see 'ready' (snapshot data) throughout.
+ *   On success it quietly replaces state.tickers / lastUpdated and writes a
+ *   fresh snapshot.  On failure it leaves the snapshot data intact.
+ */
+async function runLivePreload(silent = false): Promise<void> {
+  if (!silent) {
+    state.status = 'loading';
+    state.error = undefined;
+  }
 
   try {
     const tickers = [...top50MarketCap.tickers];
@@ -159,9 +240,58 @@ async function runPreload(): Promise<void> {
     state.tickers = enriched;
     state.lastUpdated = new Date().toISOString();
     state.status = 'ready';
+    state.error = undefined;
+
+    // M5.2: Persist the fresh snapshot so the next cold start is instant.
+    if (isSnapshotEnabled()) void writeSnapshot();
   } catch (err) {
-    state.status = 'error';
-    state.error = err instanceof Error ? err.message : 'Preload failed.';
+    if (!silent) {
+      // Non-silent: surface the error so the UI can show it.
+      state.status = 'error';
+      state.error = err instanceof Error ? err.message : 'Preload failed.';
+    }
+    // Silent mode: leave existing snapshot data intact; swallow the error.
+  }
+}
+
+// ---------------------------------------------------------------------------
+// M5.2 – Snapshot I/O helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Tries to hydrate the in-memory cache from data/cache-snapshot.json.
+ * Returns true on success, false if the file is missing, empty, or corrupt.
+ */
+async function tryLoadSnapshot(): Promise<boolean> {
+  try {
+    const raw = await fs.readFile(SNAPSHOT_PATH, 'utf8');
+    const payload = JSON.parse(raw) as { tickers: EnrichedTicker[]; lastUpdated: string | null };
+    if (!Array.isArray(payload.tickers) || payload.tickers.length === 0) return false;
+    state.tickers = payload.tickers;
+    state.lastUpdated = payload.lastUpdated ?? null;
+    state.status = 'ready';
+    state.error = undefined;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Persists the current cache contents to data/cache-snapshot.json.
+ * Non-fatal: write errors are swallowed so the app continues serving normally.
+ */
+async function writeSnapshot(): Promise<void> {
+  try {
+    await fs.mkdir(path.join(process.cwd(), 'data'), { recursive: true });
+    const payload = JSON.stringify(
+      { tickers: state.tickers, lastUpdated: state.lastUpdated },
+      null,
+      2
+    );
+    await fs.writeFile(SNAPSHOT_PATH, payload, 'utf8');
+  } catch {
+    // Non-fatal — snapshot write failure does not affect serving.
   }
 }
 
