@@ -1,286 +1,307 @@
 # Stock Scout
 
-Stock Scout is a milestone-based project for exploring stock analysis workflows, deterministic ranking, and simple portfolio simulation concepts.
+![Next.js](https://img.shields.io/badge/Next.js-14-black)
+![React](https://img.shields.io/badge/React-18-61DAFB)
+![Data Pipeline](https://img.shields.io/badge/Data%20refresh-daily%20at%2006%3A00%20UTC-brightgreen)
+![Mode](https://img.shields.io/badge/DATA_MODE-mock%20%7C%20real-blue)
 
-This repository implements M4 with a **Top 50 U.S. stocks by market cap universe**, a **real-data mode** powered by Polygon.io and SEC EDGAR, a normalized **Value Score** breakdown, and a full **Portfolio** feature.
+Stock Scout is a production-oriented stock scouting app that ranks a curated U.S. equity universe using a deterministic **Value Score v2** and serves results from a server-side cache designed for fast, stable UI rendering.
 
-## Universe Definition
-
-- Universe: **Top 50 U.S. stocks by market cap**
-- As of: **2026-02-17**
-- Source: **CompaniesMarketCap (updated daily)**
-
-Defined in `src/universe/top50MarketCap.ts`.
-
-## Architecture — M5.1 (Zero-Client-Fetch)
-
-As of M5.1 the Rankings landing page is an **async React Server Component**.
-
-1. `app/page.tsx` calls `getCacheSnapshot()` on the server. If the preload started by `instrumentation.ts` is still in flight, it joins that promise (no duplicate work) and waits for it to finish.
-2. The fully enriched `EnrichedTicker[]` array is serialised into the initial HTML payload — no client-side fetch on first paint.
-3. `src/components/RankingsClient.tsx` (a `'use client'` component) seeds its state with `useState(initialData)`. Sorting, filtering, and the buy modal all operate on that in-memory array.
-4. A network call is only made when the user explicitly clicks **Refresh data**, which POSTs to `/api/preload` and polls `/api/rankings` until the new snapshot is ready.
-
-The Portfolio and Ticker Detail pages retain client-side fetching because their data is user-specific or requires dynamic lookup beyond the pre-computed universe snapshot.
-
-## Current Functionality
-
-- **Rankings** page (landing page at `/`)
-  - Top 50 universe ranked by Value Score with **Buy** buttons per row
-  - Filter by ticker/company name, sort by Value Score or Market Cap
-  - All data embedded in initial HTML via async Server Component (M5.1) — zero client fetch on mount
-- **Ticker Detail** page
-  - 1M / 6M / 1Y chart
-  - Fundamentals panel with Value Score and component breakdown (P/E, P/S, Revenue Growth, Operating Margin — each 0–25 pts)
-  - **Refresh data** button forces a cache re-fetch
-  - **Buy** action records local trades
-- **Portfolio** page
-  - Displays holdings with current prices, gain/loss calculations, and a portfolio summary
-  - Table: Ticker | Company | Shares | Purchase Price | Current Price | Gain/Loss ($) | Gain/Loss (%) | Total Value
-  - Summary cards: Total Invested, Current Value, Overall Gain/Loss ($), Overall Gain/Loss (%)
-  - **Add Holding** form with ticker, company name, shares, purchase price, purchase date, and optional notes
-  - **Remove** button per holding
-  - Current prices read from the server-side cache; individual fetch as fallback for out-of-universe tickers
+This repo now reflects the complete M5 + M6 architecture:
+- **M5**: zero-client-fetch initial rankings load, persistent snapshotting, dynamic universe sizing, Value Score v2.
+- **M6**: scheduled daily refresh via Vercel Cron, manual/admin refresh controls, freshness indicators, health monitoring, and structured preload logging.
 
 ---
 
-## Data Sources & Data Model
+## Table of Contents
 
-### SEC CIK Mapping
-
-The SEC provides an official mapping of ticker symbols to CIK (Central Index Key) numbers, which are required to look up a company's financial filings.
-
-- **Source URL:** `https://www.sec.gov/files/company_tickers.json`
-- **Local file:** `data/sec_cik_map.json`
-- **Schema:** `{ [TICKER]: { cik: string, name: string } }` — uppercase ticker keys, zero-padded 10-digit CIK strings
-- **Regenerate:** `npm run seed:sec` (requires `SEC_USER_AGENT` to be set in `.env.local`)
-
-The file is committed to the repository so the app has company names available even before the seed script is run.
-
-### Data Model — `EnrichedTicker`
-
-The canonical type is defined in `src/types/index.ts` and is shared across the entire app.
-
-| Field | Type | Source | Notes |
-|---|---|---|---|
-| `ticker` | `string` | Universe list | Uppercase, e.g. `"AAPL"` |
-| `companyName` | `string \| null` | `data/sec_cik_map.json` | Full legal name from SEC |
-| `latestPrice` | `number \| null` | Polygon.io (prev close) | USD |
-| `marketCap` | `number \| null` | Computed: `latestPrice x sharesOutstanding` | USD |
-| `peTtm` | `number \| null` | Computed: `latestPrice / epsTtm` | Price-to-earnings TTM |
-| `ps` | `number \| null` | Computed: `marketCap / revenueTtm` | Price-to-sales TTM |
-| `epsTtm` | `number \| null` | SEC EDGAR company facts | Earnings per share diluted, TTM sum of 4 quarters |
-| `revenueTtm` | `number \| null` | SEC EDGAR company facts | USD, TTM sum of 4 quarters |
-| `revenueGrowthYoY` | `number \| null` | SEC EDGAR company facts | % change, most recent vs prior fiscal year |
-| `operatingMargin` | `number \| null` | SEC EDGAR company facts | %, computed from operating income / revenue |
-| `valueScore` | `number` | Calculated at startup | 0-100 composite score |
-| `scoreBreakdown.peScore` | `number` | Calculated at startup | 0-25 P/E sub-score |
-| `scoreBreakdown.psScore` | `number` | Calculated at startup | 0-25 P/S sub-score |
-| `scoreBreakdown.revenueGrowthScore` | `number` | Calculated at startup | 0-25 growth sub-score |
-| `scoreBreakdown.operatingMarginScore` | `number` | Calculated at startup | 0-25 margin sub-score |
-| `fundamentalsAsOf` | `string \| null` | SEC EDGAR | ISO timestamp of most recent reported period |
-
-If any field is unavailable for a given ticker, it is stored as `null` — never omitted. This makes rendering predictable and eliminates conditional checks for missing keys.
-
-### Preload / Cache System
-
-All data fetching and all score calculations happen **at server startup**, never at render time.
-
-**How it works:**
-
-1. When the Next.js server starts, `instrumentation.ts` calls `triggerPreload()` from `src/lib/dataCache.ts`
-2. The preload pipeline runs in the background:
-   - Loads `data/sec_cik_map.json` for company names and CIK numbers
-   - Fetches all universe quotes from Polygon.io in a single grouped-daily call
-   - Fetches SEC EDGAR company facts per ticker to extract TTM fundamentals
-   - Computes `peTtm`, `ps`, `marketCap`, `valueScore`, and `scoreBreakdown` for all 50 tickers
-3. Results are stored in a server-side singleton (`src/lib/dataCache.ts`) with a `lastUpdated` timestamp
-4. `GET /api/rankings` and `GET /api/ticker?ticker=XXX` read exclusively from this cache — no additional fetching occurs on page navigation
-
-**Cache states:**
-
-| Status | Meaning |
-|---|---|
-| `cold` | App just started, preload not yet triggered |
-| `loading` | Preload is in progress |
-| `ready` | Cache is fully populated; all pages serve data instantly |
-| `error` | Preload encountered a fatal error |
-
-**Manual refresh:**
-
-- The **Refresh data** button on the Rankings page sends `POST /api/preload?refresh=1`
-- This triggers a full re-fetch and re-calculation of all 50 tickers
-- The UI polls `GET /api/rankings` every 3 seconds until status returns to `ready`
-
-**Out-of-universe tickers** (e.g., a user types an arbitrary symbol in Ticker Detail):
-- These fall back to on-demand fetching via the existing provider system
-- Scores are calculated server-side in `GET /api/ticker` before the response is sent — never in the browser
+- [What You Get](#what-you-get)
+- [Architecture (M5 + M6)](#architecture-m5--m6)
+- [Data Freshness Pipeline](#data-freshness-pipeline)
+- [Value Score v2](#value-score-v2)
+- [API Surface](#api-surface)
+- [Vercel Deployment](#vercel-deployment)
+- [All Environment Variables](#all-environment-variables)
+- [Local Development](#local-development)
+- [Monitoring](#monitoring)
+- [Data Sources](#data-sources)
+- [Portfolio Storage](#portfolio-storage)
+- [Rate Limits & Operational Notes](#rate-limits--operational-notes)
+- [Disclaimer](#disclaimer)
 
 ---
 
-## Value Score Methodology
+## What You Get
 
-The Value Score is a composite 0-100 metric built from four equally-weighted components (0-25 each). All scores are **pre-calculated at startup** by `src/lib/valueScore.ts` and stored in the cache. The UI performs no calculations — it only renders the stored values.
+### Rankings (`/`)
+- Top universe ranked by Value Score v2.
+- Server-rendered initial dataset (no client fetch on first paint).
+- Client-side sort/filter interactions.
+- Manual “Refresh Data” workflow that triggers server refresh and polls readiness.
+- Freshness metadata (`lastUpdated`, cache age) surfaced by API/UI.
 
-### Components
+### Ticker Detail (`/ticker?ticker=...`)
+- Price and fundamentals view with Value Score breakdown.
+- Historical chart (1M / 6M / 1Y).
+- Buy action integration for portfolio simulation.
+- Cache-backed data for in-universe tickers; provider fallback for out-of-universe lookups.
 
-#### P/E Score (0-25) — Valuation relative to earnings
-Lower P/E = better value. Rewards companies trading at a reasonable multiple of earnings.
-
-| P/E | Score |
-|---|---|
-| <= 10 | 25 (max) |
-| 25 | ~12-13 |
-| >= 40 | 0 |
-| Negative or null | 0 |
-
-Formula: `25 x (1 - (P/E - 10) / 30)`, clamped to [0, 25]
-
-#### P/S Score (0-25) — Valuation relative to revenue
-Lower P/S = better value. Useful for companies with thin or negative earnings where P/E is uninformative.
-
-| P/S | Score |
-|---|---|
-| <= 1 | 25 (max) |
-| 5.5 | ~12 |
-| >= 10 | 0 |
-| null | 0 |
-
-Formula: `25 x (1 - (P/S - 1) / 9)`, clamped to [0, 25]
-
-#### Revenue Growth Score (0-25) — Momentum
-Higher year-over-year revenue growth = higher score. Rewards companies growing their top line.
-
-| YoY Growth | Score |
-|---|---|
-| >= 20% | 25 (max) |
-| 10% | ~12-13 |
-| <= 0% | 0 |
-| Negative or null | 0 |
-
-Formula: `25 x (growth / 20)`, clamped to [0, 25]
-
-#### Operating Margin Score (0-25) — Quality and efficiency
-Higher operating margin = higher score. Rewards profitable, capital-efficient business models.
-
-| Operating Margin | Score |
-|---|---|
-| >= 25% | 25 (max) |
-| 12.5% | ~12-13 |
-| <= 0% | 0 |
-| Negative or null | 0 |
-
-Formula: `25 x (margin / 25)`, clamped to [0, 25]
-
-### Why these four factors?
-
-- **P/E and P/S** measure valuation from two angles: earnings-based and revenue-based. Using both prevents gaming the score with thin margins (P/E) or expensive revenue multiples (P/S).
-- **Revenue Growth** captures momentum — a fast-growing company may be expensive today but justified by future earnings.
-- **Operating Margin** captures quality and efficiency — it distinguishes durable businesses from high-revenue-but-low-profit operations.
-
-### Key guarantee
-
-> All scores are pre-calculated at server startup and served from the in-memory cache.
-> The UI never performs arithmetic — it only renders numbers it received from the server.
+### Portfolio (`/portfolio`)
+- Local simulated holdings with P/L calculations.
+- Current pricing enriched from cache (with fallback fetch when needed).
+- Add/remove holdings and quick-buy integration.
 
 ---
 
-## Setting Up `.env.local`
+## Architecture (M5 + M6)
 
-Copy the example file and fill in your values:
+### 1) Zero-client-fetch first paint (M5.1)
+- `app/page.tsx` is an async server component that calls `getCacheSnapshot()`.
+- If preload is in-flight, requests join the same promise rather than duplicating work.
+- Initial rankings payload is serialized into HTML and hydrated into `RankingsClient` state.
 
-```bash
-cp .env.local.example .env.local
-```
+### 2) Shared server cache + snapshot persistence (M5.2)
+- `src/lib/dataCache.ts` owns singleton cache state (`cold | loading | ready | error`).
+- Cache writes are atomic and persisted to `data/cache/rankings-snapshot.json`.
+- All rankings/ticker endpoints read cache state rather than recomputing at render time.
 
-Then edit `.env.local`. Never commit that file — it is in `.gitignore`.
+### 3) Dynamic universe sizing (M5.3)
+- Universe list is currently the curated Top-50 set from `src/universe/top50MarketCap.ts`.
+- Base universe list is maintained in `src/universe/top50MarketCap.ts`.
 
-## Environment Variables
+### 4) Value Score v2 (M5.4)
+- Sector-aware relative scoring and configurable weights.
+- Composite score remains deterministic and server-side.
 
-| Variable | Required for real mode | Description |
-|---|---|---|
-| `POLYGON_API_KEY` | Yes | Polygon.io API key for live price data. Sign up free at https://polygon.io |
-| `SEC_USER_AGENT` | Yes | Your name and email for SEC EDGAR fair-use policy, e.g. `Jane Doe jane@example.com` |
-| `DATA_MODE` | No | `mock` (default) or `real` (server-side) |
-| `NEXT_PUBLIC_DATA_MODE` | No | Must match `DATA_MODE` (client-side) |
+### 5) Automated refresh pipeline (M6)
+- Scheduled refresh via Vercel Cron at **06:00 UTC daily**.
+- Dedicated cron endpoint with Bearer token auth via `CRON_SECRET`.
+- Manual/admin refresh path retained (`/api/preload`) with optional hardening.
+- Health endpoint with cache-state visibility.
+- Structured JSON logs for preload lifecycle events.
 
-See `.env.local.example` for a fully documented example.
+---
 
-## Real Mode Setup
+## Data Freshness Pipeline
 
-```bash
-# .env.local
-DATA_MODE=real
-NEXT_PUBLIC_DATA_MODE=real
-POLYGON_API_KEY=your_polygon_api_key_here
-SEC_USER_AGENT=Your Name your@email.com
-```
+Stock Scout keeps UI fast and stable by moving expensive work into a centralized refresh pipeline.
 
-## Portfolio
+### Startup preload
+1. `instrumentation.ts` triggers preload at app boot.
+2. Cache transitions to `loading`.
+3. Universe quotes + fundamentals are fetched and enriched.
+4. Value scores are computed.
+5. Atomic snapshot write completes.
+6. Cache transitions to `ready` and `lastUpdated` is set.
 
-Holdings are stored locally in `data/portfolio.json`. The file is created automatically on first use and is excluded from git via `.gitignore` to keep personal financial data private.
+### Scheduled refresh (production)
+- Vercel Cron invokes `POST /api/cron/refresh` daily (`0 6 * * *`).
+- Request must include `Authorization: Bearer <CRON_SECRET>`.
+- Endpoint calls `triggerRefresh()` (force refresh path).
+- On success, response includes current status, lastUpdated, tickerCount.
 
-### JSON Structure
+### Manual refresh (dev/admin)
+- `POST /api/preload?refresh=1` triggers force refresh.
+- Optional protection: set `PRELOAD_REQUIRE_ADMIN=1` and send cron-style bearer auth.
+- Client can poll `/api/rankings` or `/api/preload` for readiness.
 
-The file is human-readable and can be manually edited between sessions:
+### Cache health states
+- `cold`: startup, preload not yet initiated.
+- `loading`: refresh in progress.
+- `ready`: cache populated, serving stable data.
+- `error`: refresh failed; details available in health payload/logs.
+
+---
+
+## Value Score v2
+
+Value Score v2 is computed server-side from enriched fundamentals and valuation metrics.
+
+- Components include valuation, growth, and quality factors.
+- Sector-relative normalization is applied where configured.
+- Weights are configurable through environment variables.
+- UI renders precomputed scores; browser does not perform scoring math.
+
+Reference implementations:
+- `src/lib/valueScore.ts`
+- `src/scoring/calculateValueScore.ts`
+
+---
+
+## API Surface
+
+### Market & rankings
+- `GET /api/rankings` → cached ranked dataset + cache metadata.
+- `GET /api/market/universe-quotes` → universe quote view.
+- `GET /api/market/quote?ticker=...` → single quote.
+- `GET /api/market/history?ticker=...&range=...` → chart history.
+- `GET /api/fundamentals?ticker=...` → fundamentals panel data.
+- `GET /api/ticker?ticker=...` → enriched ticker detail.
+
+### Refresh & health
+- `GET /api/preload` → current preload/cache status.
+- `POST /api/preload` → starts preload; add `?refresh=1` for force refresh.
+- `POST /api/cron/refresh` → authenticated cron refresh endpoint.
+- `GET /api/health` → status, lastUpdated, universeSize, scoreVersion, dataMode, cacheState.
+
+### Portfolio
+- `GET /api/portfolio` → holdings + current valuation.
+- `POST /api/portfolio` → add holding.
+- `DELETE /api/portfolio/[ticker]` → remove holdings by ticker.
+- `POST /api/portfolio/buy` → quick-buy helper endpoint.
+- `GET /api/portfolio/trades` → raw trade history view.
+
+---
+
+## Vercel Deployment
+
+### 1) Create project + set environment variables
+Configure production env vars in Vercel (see full table below), including:
+- `DATA_MODE`
+- `NEXT_PUBLIC_DATA_MODE`
+- `POLYGON_API_KEY` (real mode)
+- `SEC_USER_AGENT` (real mode)
+- `CRON_SECRET` (required for cron auth)
+
+### 2) Cron schedule
+`vercel.json` already defines:
 
 ```json
 {
-  "holdings": [
+  "crons": [
     {
-      "ticker": "AAPL",
-      "companyName": "Apple Inc.",
-      "shares": 10,
-      "purchasePrice": 195.50,
-      "purchaseDate": "2024-11-15",
-      "notes": "Added on dip"
+      "path": "/api/cron/refresh",
+      "schedule": "0 6 * * *"
     }
   ]
 }
 ```
 
-Each holding has:
-- `ticker` — uppercase stock symbol
-- `companyName` — display name for the company
-- `shares` — number of shares held
-- `purchasePrice` — price per share at time of purchase (USD)
-- `purchaseDate` — date of purchase in `YYYY-MM-DD` format
-- `notes` — (optional) free-text annotation
+### 3) Recommended production settings
+- Keep `PRELOAD_REQUIRE_ADMIN=1` to harden manual refresh endpoint.
+- Use a strong random `CRON_SECRET`.
+- Run real mode only when Polygon/SEC credentials are configured.
+- Monitor `/api/health` and preload logs after each deploy.
 
-**Purchase price and quantity are never auto-updated** — the user controls these values manually, which is intentional. To adjust a position, edit the JSON file directly or remove and re-add via the UI.
+---
 
-### API Routes
+## All Environment Variables
 
-- `GET /api/portfolio` — returns all holdings enriched with current price and calculated gain/loss from the data cache
-- `POST /api/portfolio` — adds a new holding; body: `{ ticker, companyName, shares, purchasePrice, purchaseDate, notes? }`
-- `DELETE /api/portfolio/:ticker` — removes all holdings for a ticker
-- `POST /api/portfolio/buy` — legacy quick-buy endpoint used by Rankings/Ticker Detail pages
+Copy and edit:
 
-## Rate Limits
+```bash
+cp .env.local.example .env.local
+```
 
-- Polygon free tier: 5 requests per minute. Universe quotes use the grouped-daily endpoint (single request for all tickers) to minimise API fan-out.
-- SEC APIs require a descriptive `User-Agent`; set `SEC_USER_AGENT`.
-- In real mode, preloading all 50 tickers from SEC EDGAR is sequential to respect rate limits. Expect ~1-2 minutes for a full preload.
+| Variable | Required | Example | Purpose |
+|---|---|---|---|
+| `DATA_MODE` | No (defaults to mock) | `mock` / `real` | Server data source mode for preload and API routes. |
+| `NEXT_PUBLIC_DATA_MODE` | Yes (should match `DATA_MODE`) | `mock` / `real` | Client-visible mode flag used by providers. |
+| `POLYGON_API_KEY` | Yes in `real` mode | `pk_xxx` | Polygon quote/history API authentication. |
+| `SEC_USER_AGENT` | Yes in `real` mode | `Jane Doe jane@domain.com` | Required SEC EDGAR user-agent identity. |
+| `CRON_SECRET` | Yes for cron + protected refresh | long random string | Bearer secret for `/api/cron/refresh` and optional admin preload gating. |
+| `PRELOAD_REQUIRE_ADMIN` | Optional | `1` | If set to `1`, `POST /api/preload` requires bearer auth. |
+| `SCORE_VERSION` | Optional | `v1` / `v2` | Selects score algorithm version (`v1` default, `v2` sector-relative). |
+| `ALPHAVANTAGE_API_KEY` | Optional (legacy provider paths) | `demo_or_real_key` | Used only by Alpha Vantage service/provider modules. |
 
-## Run Locally
+> Note: Keep `.env.local` out of source control. `.env.local.example` is the canonical template.
+
+---
+
+## Local Development
 
 ```bash
 npm install
 npm run dev
 ```
 
-Open http://localhost:3000.
+Open `http://localhost:3000`.
 
-## Scripts
+### Useful scripts
 
 ```bash
-npm run dev          # Start development server (triggers preload in background)
-npm run build        # Production build
-npm run start        # Start production server
-npm run lint         # ESLint
-npm run seed:sec     # Regenerate data/sec_cik_map.json from SEC EDGAR
+npm run dev       # start Next.js in development mode
+npm run build     # production build
+npm run start     # run production server
+npm run lint      # lint project
+npm run seed:sec  # regenerate data/sec_cik_map.json
 ```
+
+### Real mode quick start
+
+```bash
+# .env.local
+DATA_MODE=real
+NEXT_PUBLIC_DATA_MODE=real
+POLYGON_API_KEY=your_polygon_key
+SEC_USER_AGENT=Your Name your@email.com
+CRON_SECRET=your_long_random_secret
+PRELOAD_REQUIRE_ADMIN=1
+```
+
+---
+
+## Monitoring
+
+### Health endpoint
+`GET /api/health` response shape:
+
+```json
+{
+  "status": "ready",
+  "lastUpdated": "2026-02-18T06:00:01.234Z",
+  "universeSize": 50,
+  "scoreVersion": "v2",
+  "dataMode": "real",
+  "cacheState": {
+    "status": "ready",
+    "error": null,
+    "inFlight": false
+  }
+}
+```
+
+### Structured preload logs
+Refresh lifecycle emits JSON logs with timestamps and event keys, e.g.:
+- `preload.started`
+- `preload.join_in_flight`
+- `preload.skip_already_ready`
+- `preload.succeeded`
+- `preload.failed`
+
+Use these logs to detect slow refreshes, startup failures, and repeated reload churn.
+
+### Operational checks
+- Verify `lastUpdated` moves after manual/cron refresh.
+- Alert when `status=error` persists.
+- Track refresh duration (`durationMs`) from preload logs.
+
+---
+
+## Data Sources
+
+- **Universe list**: `src/universe/top50MarketCap.ts`
+- **Market prices/history**: Polygon.io APIs
+- **Fundamentals**: SEC EDGAR Company Facts
+- **Ticker→CIK mapping**: `data/sec_cik_map.json` (generated via `npm run seed:sec`)
+
+---
+
+## Portfolio Storage
+
+Portfolio simulation data is stored locally in `data/portfolio.json` (gitignored). This keeps user-entered holdings private and easy to inspect/edit during local use.
+
+---
+
+## Rate Limits & Operational Notes
+
+- Polygon free-tier limits are strict; grouped endpoints reduce fan-out.
+- SEC EDGAR requires a valid descriptive user-agent.
+- In `real` mode, full preload can take ~1–2 minutes depending on network and SEC response times.
+- Cache-first serving keeps UI responsive even when upstream providers are slow.
+
+---
 
 ## Disclaimer
 
-Educational and exploratory use only. Not investment advice.
+For educational and exploratory use only. This project is **not** investment advice.
