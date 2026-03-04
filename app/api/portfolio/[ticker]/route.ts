@@ -1,7 +1,23 @@
+/**
+ * app/api/portfolio/[ticker]/route.ts
+ *
+ * DELETE /api/portfolio/[ticker]
+ *
+ * Removes all holdings with the given ticker symbol from the portfolio file.
+ * If the ticker is not found, returns 404.
+ *
+ * The ticker is taken from the URL path segment, e.g.:
+ *   DELETE /api/portfolio/AAPL  → removes all AAPL holdings.
+ *
+ * Note: removes ALL holdings for the ticker (users cannot own the same ticker
+ * in multiple lots; to track lots use the notes field).
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
 import { readPortfolio, writePortfolio } from '@/lib/portfolio';
 
 type RouteContext = {
+  /** Dynamic route segment — the ticker symbol from the URL path. */
   params: Promise<{ ticker: string }>;
 };
 

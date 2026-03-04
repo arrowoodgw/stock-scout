@@ -1,22 +1,43 @@
+/**
+ * src/components/FundamentalsPanel.tsx
+ *
+ * Displays SEC-sourced financial fundamentals and the pre-computed Value Score
+ * breakdown for one ticker on the Ticker Detail page.
+ *
+ * All values come from the EnrichedTicker passed as a prop — this component
+ * does no fetching and performs no calculations.
+ *
+ * Score breakdown section:
+ *   - Shows each sub-score out of its weight denominator (v1: /25, v2: /weight).
+ *   - When scoreVersion==="v2" a badge is shown and sector-adjusted labels are used.
+ *   - The weights are stamped on the EnrichedTicker at preload time so the UI
+ *     never needs to import server-side scoring config.
+ */
+
 import { EnrichedTicker } from '@/types';
 import { currencyFormatter, formatLargeCurrency, numberFormatter } from '@/utils/formatters';
 
 type FundamentalsPanelProps = {
+  /** Fully enriched ticker data from the cache (includes scores and sector). */
   enriched: EnrichedTicker;
 };
 
+/** Render a plain number with comma separators, or an em-dash when null. */
 function renderNumber(value: number | null) {
   return value === null ? '—' : numberFormatter.format(value);
 }
 
+/** Render a percentage to one decimal place, or an em-dash when null. */
 function renderPercent(value: number | null) {
   return value === null ? '—' : `${value.toFixed(1)}%`;
 }
 
+/** Render a USD dollar amount, or an em-dash when null. */
 function renderCurrency(value: number | null) {
   return value === null ? '—' : currencyFormatter.format(value);
 }
 
+/** Render a large dollar amount with B/T suffix (e.g. "$2.30B"), or em-dash when null. */
 function renderLargeCurrency(value: number | null) {
   return value === null ? '—' : formatLargeCurrency(value);
 }

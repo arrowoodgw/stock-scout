@@ -1,6 +1,22 @@
+/**
+ * src/providers/cachedMockFundamentalsDataProvider.ts
+ *
+ * Caching wrapper around MockFundamentalsDataProvider.
+ *
+ * Adds two performance optimisations on top of the base mock:
+ *   1. In-memory TTL cache (24 hours) — avoids regenerating mock data on
+ *      every call to getFundamentals().
+ *   2. In-flight deduplication — if two concurrent callers request the same
+ *      ticker at the same time, only one mock fetch runs; both share the result.
+ *
+ * This mirrors the caching pattern used by SecFundamentalsDataProvider (real mode),
+ * so the two providers behave identically from the callers' perspective.
+ */
+
 import { MockFundamentalsDataProvider } from './mockFundamentalsDataProvider';
 import { FundamentalsDataProvider, RequestOptions, StockFundamentals } from './types';
 
+/** How long a cached fundamentals result stays valid (24 hours). */
 const FUNDAMENTALS_TTL_MS = 24 * 60 * 60 * 1000;
 
 type CacheEntry = {

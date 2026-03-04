@@ -1,11 +1,31 @@
+/**
+ * app/api/portfolio/route.ts
+ *
+ * GET  /api/portfolio  — Return all holdings enriched with current market prices.
+ * POST /api/portfolio  — Add a new holding to the portfolio.
+ *
+ * GET response shape:
+ *   { holdings: EnrichedPortfolioHolding[] }
+ *   Each holding includes: currentPrice, currentValue, gainLossDollar, gainLossPercent.
+ *   Prices are looked up from the in-memory cache (universe tickers only).
+ *   Holdings for out-of-universe tickers will have currentPrice=null; the
+ *   Portfolio page fetches those individually via /api/market/quote as a fallback.
+ *
+ * POST request body:
+ *   { ticker, companyName?, shares, purchasePrice, purchaseDate?, notes? }
+ *   All fields are sanitised and validated before writing.
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
 import { readPortfolio, writePortfolio } from '@/lib/portfolio';
 import { getCacheSnapshot } from '@/lib/dataCache';
 import { EnrichedPortfolioHolding } from '@/types';
 
+/** Input validation limits to guard against oversized payloads. */
 const MAX_TICKER_LEN = 10;
 const MAX_NAME_LEN = 200;
 const MAX_NOTES_LEN = 1000;
+/** Validates YYYY-MM-DD date strings. */
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 export async function GET() {

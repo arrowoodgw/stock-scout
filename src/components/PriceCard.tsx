@@ -1,6 +1,17 @@
+/**
+ * src/components/PriceCard.tsx
+ *
+ * Small presentational card that displays the latest price for a stock.
+ * Shown at the top of the Ticker Detail view, above the historical chart.
+ *
+ * aria-live="polite" causes screen readers to announce price changes when
+ * the user switches tickers or clicks "Refresh data".
+ */
+
 import { StockQuote } from '@/providers/types';
 
 type PriceCardProps = {
+  /** The quote to display, containing ticker, price, and updatedAt timestamp. */
   quote: StockQuote;
 };
 

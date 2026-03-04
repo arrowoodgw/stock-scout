@@ -1,5 +1,25 @@
 'use client';
 
+/**
+ * app/portfolio/page.tsx
+ *
+ * Portfolio simulation page — accessible at /portfolio.
+ *
+ * This is a fully client-side page ('use client') because it relies on React
+ * state and effect hooks for interactivity.
+ *
+ * Features:
+ *   - Fetches holdings from GET /api/portfolio (enriched with current prices).
+ *   - Falls back to GET /api/market/quote for holdings whose ticker is not
+ *     in the universe cache (i.e. custom tickers the user entered manually).
+ *   - Shows a summary grid: total invested, current value, total gain/loss.
+ *   - Holdings table with colour-coded gain/loss columns.
+ *   - "Add Holding" form to record a new purchase (POST /api/portfolio).
+ *   - "Remove" button per row (DELETE /api/portfolio/[ticker]).
+ *
+ * All P/L calculations are done client-side from price data returned by the API.
+ */
+
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { currencyFormatter } from '@/utils/formatters';
 import { EnrichedPortfolioHolding } from '@/types';
@@ -9,6 +29,7 @@ type PortfolioResponse = {
   error?: string;
 };
 
+/** Fetches all holdings from GET /api/portfolio, already enriched with current prices. */
 async function fetchPortfolio(): Promise<EnrichedPortfolioHolding[]> {
   const response = await fetch('/api/portfolio', { cache: 'no-store' });
   const payload = (await response.json()) as PortfolioResponse;
@@ -20,6 +41,10 @@ async function fetchPortfolio(): Promise<EnrichedPortfolioHolding[]> {
   return Array.isArray(payload.holdings) ? payload.holdings : [];
 }
 
+/**
+ * Fetches the current price for a single ticker via /api/market/quote.
+ * Used as a fallback when a holding's ticker is not in the universe cache.
+ */
 async function fetchIndividualPrice(ticker: string): Promise<number> {
   const response = await fetch(`/api/market/quote?ticker=${encodeURIComponent(ticker)}`, { cache: 'no-store' });
   const payload = (await response.json()) as { price?: number; error?: string };
@@ -31,6 +56,7 @@ async function fetchIndividualPrice(ticker: string): Promise<number> {
   return payload.price;
 }
 
+/** POSTs a new holding to /api/portfolio. Throws on non-2xx responses. */
 async function postHolding(data: {
   ticker: string;
   companyName: string;
@@ -51,6 +77,7 @@ async function postHolding(data: {
   }
 }
 
+/** Sends DELETE /api/portfolio/[ticker] to remove a holding. Throws on non-2xx. */
 async function deleteHolding(ticker: string): Promise<void> {
   const response = await fetch(`/api/portfolio/${encodeURIComponent(ticker)}`, {
     method: 'DELETE',
@@ -62,6 +89,10 @@ async function deleteHolding(ticker: string): Promise<void> {
   }
 }
 
+/**
+ * Returns a CSS class name for colouring gain/loss values.
+ * "gain" → green, "loss" → red, "" → neutral.
+ */
 function gainClass(value: number | null): string {
   if (value === null) return '';
   if (value > 0) return 'gain';

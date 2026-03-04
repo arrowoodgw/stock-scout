@@ -1,3 +1,21 @@
+/**
+ * app/api/market/quote/route.ts
+ *
+ * GET /api/market/quote?ticker=AAPL[&refresh=1]
+ *
+ * Returns the latest (or previous-close) price for a single ticker.
+ * Delegates to the active StockDataProvider (Polygon in real mode, mock otherwise).
+ *
+ * Used by the Portfolio page to fill in prices for out-of-universe tickers
+ * that are not covered by the main cache.
+ *
+ * Query parameters:
+ *   ticker   (required) — stock symbol, e.g. AAPL
+ *   refresh  (optional) — pass "1" to bypass the provider's internal cache
+ *
+ * Response: StockQuote { ticker, price, updatedAt }
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
 import { getStockDataProvider } from '@/providers';
 

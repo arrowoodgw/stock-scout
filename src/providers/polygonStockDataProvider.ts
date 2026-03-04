@@ -1,7 +1,36 @@
+/**
+ * src/providers/polygonStockDataProvider.ts
+ *
+ * Real-mode StockDataProvider that fetches price data from Polygon.io.
+ *
+ * Endpoints used:
+ *   - Historical prices: /v2/aggs/ticker/{ticker}/range/1/day/{from}/{to}
+ *     Returns adjusted daily OHLCV bars.  One year of data is fetched and
+ *     the requested range (1M/6M/1Y) is sliced in memory to avoid repeated API calls.
+ *
+ *   - Latest quote: /v2/aggs/ticker/{ticker}/prev
+ *     Returns the previous trading day's adjusted closing price.
+ *     Used as the "current price" for UI purposes.
+ *
+ * Caching:
+ *   - Historical price series cached for 12 hours (HISTORY_TTL_MS).
+ *   - Quote cached for 5 minutes (QUOTE_TTL_MS).
+ *   - In-flight deduplication for both.
+ *
+ * Browser vs server:
+ *   - In the browser, calls route through /api/market/history and
+ *     /api/market/universe-quotes to avoid exposing the Polygon API key.
+ *   - On the server, calls Polygon directly via polygonRateLimitedFetch.
+ *
+ * Requires POLYGON_API_KEY env var.
+ */
+
 import { HistoricalPoint, PriceRange, RequestOptions, StockDataProvider, StockQuote } from './types';
 import { polygonRateLimitedFetch } from '@/server/polygonRateLimit';
 
+/** How long to cache historical price data (12 hours). */
 const HISTORY_TTL_MS = 12 * 60 * 60 * 1000;
+/** How long to cache the latest quote (5 minutes). */
 const QUOTE_TTL_MS = 5 * 60 * 1000;
 
 type PolygonAggResult = {

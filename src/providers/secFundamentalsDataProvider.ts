@@ -1,7 +1,50 @@
+/**
+ * src/providers/secFundamentalsDataProvider.ts
+ *
+ * Real-mode FundamentalsDataProvider that fetches financial data from SEC EDGAR.
+ *
+ * Data pipeline for each ticker:
+ *   1. Look up the company's CIK (Central Index Key) from the SEC ticker map.
+ *      The map is fetched once from https://www.sec.gov/files/company_tickers.json
+ *      and cached in memory for the lifetime of the server process.
+ *   2. Fetch the company's full XBRL fact history from:
+ *        https://data.sec.gov/api/xbrl/companyfacts/CIK<nnnnnnnnnn>.json
+ *   3. Parse the XBRL facts to compute:
+ *        - EPS (diluted, TTM) — summing 4 standalone quarters
+ *        - Revenue (TTM) — same approach
+ *        - Operating Income (TTM) — same approach
+ *        - Operating Margin (%) — opIncome / revenue × 100
+ *        - Revenue YoY growth — most recent FY vs prior FY
+ *        - Shares outstanding — most recent quarterly filing
+ *
+ * TTM calculation:
+ *   SEC filers report quarterly figures in two ways:
+ *     a) Standalone quarters (Q1/Q2/Q3/Q4 each spanning ~90 days)
+ *     b) Cumulative YTD (Q2 = H1, Q3 = 9M, Q4 = FY)
+ *   This provider detects standalone quarters by checking the period span
+ *   (45–120 days) and sums the most recent 4 unique quarters.
+ *   Falls back to the most recent annual (FY) figure if fewer than 4 quarters
+ *   are available.
+ *
+ * Caching:
+ *   - Results are cached per ticker for 24 hours (FUNDAMENTALS_TTL_MS).
+ *   - In-flight deduplication prevents redundant SEC calls for the same ticker.
+ *
+ * Browser vs server:
+ *   - When called from the browser (TickerDetailView), delegates to the internal
+ *     /api/fundamentals route to avoid CORS issues and to keep SEC credentials
+ *     server-side.
+ *   - When called from the server (dataCache preload), calls SEC directly.
+ *
+ * Requires SEC_USER_AGENT env var:  "Your Name your@email.com"
+ * (SEC EDGAR policy requires a descriptive User-Agent string.)
+ */
+
 import { FundamentalsDataProvider, RequestOptions, StockFundamentals } from './types';
 
 const COMPANY_TICKERS_URL = 'https://www.sec.gov/files/company_tickers.json';
 const COMPANY_FACTS_BASE = 'https://data.sec.gov/api/xbrl/companyfacts';
+/** How long to cache a ticker's fundamentals in memory (24 hours). */
 const FUNDAMENTALS_TTL_MS = 24 * 60 * 60 * 1000;
 
 type SecTickerEntry = {

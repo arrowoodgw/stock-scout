@@ -1,8 +1,30 @@
+/**
+ * app/api/market/history/route.ts
+ *
+ * GET /api/market/history?ticker=AAPL&range=1M[&refresh=1]
+ *
+ * Returns an array of daily closing prices (HistoricalPoint[]) for the requested
+ * ticker and time range.  Used by the HistoricalChart component on the Ticker
+ * Detail page.
+ *
+ * Delegates to the active StockDataProvider:
+ *   - Real mode:  Polygon.io daily aggregate bars
+ *   - Mock mode:  deterministic seeded price series
+ *
+ * Query parameters:
+ *   ticker   (required) — stock symbol, e.g. AAPL
+ *   range    (required) — "1M", "6M", or "1Y"
+ *   refresh  (optional) — pass "1" to bypass provider-level caching
+ *
+ * Response: HistoricalPoint[] (array of { date: string; price: number })
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
 import { getStockDataProvider } from '@/providers';
 import { PriceRange } from '@/providers/types';
 
 const stockProvider = getStockDataProvider();
+/** Allowed range values — used to validate the query parameter. */
 const ranges = new Set<PriceRange>(['1M', '6M', '1Y']);
 
 export async function GET(request: NextRequest) {

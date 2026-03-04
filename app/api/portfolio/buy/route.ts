@@ -1,3 +1,19 @@
+/**
+ * app/api/portfolio/buy/route.ts
+ *
+ * POST /api/portfolio/buy
+ *
+ * Quick-buy helper — simplified version of POST /api/portfolio tailored
+ * for the "Buy" modal on the Rankings and Ticker Detail pages.
+ *
+ * Differences from the full POST /api/portfolio endpoint:
+ *   - No purchaseDate or notes fields (purchaseDate defaults to today).
+ *   - shares must be a whole number ≥ 1 (modal uses an integer input).
+ *
+ * Request body: { ticker, companyName?, shares, purchasePrice }
+ * Response on success: { ok: true }
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
 import { readPortfolio, writePortfolio } from '@/lib/portfolio';
 
