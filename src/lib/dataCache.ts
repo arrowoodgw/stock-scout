@@ -12,12 +12,16 @@
  *
  * Data pipeline (runs at preload time only)
  * ──────────────────────────────────────────
- * 1. Load sec_cik_map.json → company name per ticker
- * 2. Fetch universe quotes from Polygon  → latestPrice per ticker
- * 3. Fetch SEC company facts per ticker → epsTtm, revenueTtm, revenueGrowthYoY, operatingMargin, sharesOutstanding
+ * 1. Load sec_cik_map.json → company name per ticker (optional; falls back to null)
+ * 2. Fetch universe quotes from Polygon      → latestPrice per ticker
+ * 3. Fetch fundamentals via active provider  → epsTtm, revenueTtm, revenueGrowthYoY,
+ *                                              operatingMargin, sharesOutstanding
+ *    Active provider is selected by FUNDAMENTALS_PROVIDER env var (see src/providers/index.ts):
+ *      polygon (default) → Polygon.io /vX/reference/financials
+ *      sec               → SEC EDGAR /api/xbrl/companyfacts
  * 4. Compute peTtm = latestPrice / epsTtm
- * 5. Compute ps    = (latestPrice × sharesOutstanding) / revenueTtm
- * 6. Compute marketCap = latestPrice × sharesOutstanding
+ * 5. Compute marketCap = latestPrice × sharesOutstanding  (or provider value as fallback)
+ * 6. Compute ps = marketCap / revenueTtm                  (or provider value as fallback)
  * 7. Calculate ValueScore breakdown via lib/valueScore.ts
  * 8. Store EnrichedTicker[] in cache with lastUpdated timestamp
  */
@@ -27,15 +31,18 @@ import path from 'path';
 import { top50MarketCap } from '@/universe/top50MarketCap';
 import { calculateValueScore, TICKER_SECTOR_MAP } from '@/lib/valueScore';
 import { CacheStatus, DataCachePayload, EnrichedTicker } from '@/types';
+import { getFundamentalsDataProvider, getFundamentalsProviderName } from '@/providers';
 
 // ---------------------------------------------------------------------------
 // SEC CIK map type (matches scripts/seedSecCikMap.ts output)
+// Used for company names regardless of which fundamentals provider is active.
+// Removed entirely in M7.3.
 // ---------------------------------------------------------------------------
 
 type SecCikMap = Record<string, { cik: string; name: string }>;
 
 // ---------------------------------------------------------------------------
-// Polygon types
+// Polygon quote types (used for the price layer — always Polygon)
 // ---------------------------------------------------------------------------
 
 type PolygonGroupedResult = { T: string; c: number; t: number };
@@ -48,24 +55,6 @@ type PolygonPrevResponse = {
   status: string;
   results?: Array<{ c: number; t: number }>;
   error?: string;
-};
-
-// ---------------------------------------------------------------------------
-// SEC EDGAR types
-// ---------------------------------------------------------------------------
-
-type FactPoint = {
-  start?: string;
-  end?: string;
-  filed?: string;
-  form?: string;
-  fp?: string;
-  fy?: number;
-  val?: number;
-};
-
-type CompanyFactsResponse = {
-  facts?: Record<string, Record<string, { units?: Record<string, FactPoint[]> }>>;
 };
 
 // ---------------------------------------------------------------------------
@@ -189,6 +178,7 @@ export function getCacheHealth() {
     universeSize: state.tickers.length,
     scoreVersion: 'v2' as const,
     dataMode: isRealMode() ? 'real' : 'mock',
+    fundamentalsProvider: getFundamentalsProviderName(),
     cacheState: {
       status: state.status,
       error: state.error ?? null,
@@ -209,19 +199,20 @@ async function runPreload(): Promise<void> {
 
   logPreloadEvent('info', 'preload.started', {
     tickerTarget: top50MarketCap.tickers.length,
-    dataMode: isRealMode() ? 'real' : 'mock'
+    dataMode: isRealMode() ? 'real' : 'mock',
+    fundamentalsProvider: getFundamentalsProviderName()
   });
 
   try {
     const tickers = [...top50MarketCap.tickers];
 
-    // Step 1 — load SEC CIK map for company names and CIKs
+    // Step 1 — load SEC CIK map for company names (optional; falls back to null)
     const secMap = await loadSecCikMap();
 
     // Step 2 — fetch all universe quotes in as few Polygon calls as possible
     const quotes = await fetchUniverseQuotes(tickers);
 
-    // Step 3–7 — fetch SEC fundamentals per ticker, enrich, and score
+    // Steps 3–7 — fetch fundamentals via the active provider, enrich, and score
     const enriched = await enrichAllTickers(tickers, secMap, quotes);
 
     const refreshedAt = new Date().toISOString();
@@ -238,7 +229,8 @@ async function runPreload(): Promise<void> {
     logPreloadEvent('info', 'preload.succeeded', {
       durationMs: Date.now() - startedAtMs,
       tickerCount: enriched.length,
-      lastUpdated: refreshedAt
+      lastUpdated: refreshedAt,
+      fundamentalsProvider: getFundamentalsProviderName()
     });
   } catch (err) {
     state.status = 'error';
@@ -261,7 +253,7 @@ async function writeSnapshotFile(snapshot: CacheSnapshotFile): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Step 1: Load sec_cik_map.json
+// Step 1: Load sec_cik_map.json (company names only — not used for CIK lookup)
 // ---------------------------------------------------------------------------
 
 async function loadSecCikMap(): Promise<SecCikMap> {
@@ -270,14 +262,14 @@ async function loadSecCikMap(): Promise<SecCikMap> {
     const raw = await fs.readFile(filePath, 'utf8');
     return JSON.parse(raw) as SecCikMap;
   } catch {
-    // If the file doesn't exist yet (seed hasn't run), return an empty map.
-    // Company names will be null; CIKs will be fetched from the live SEC endpoint.
+    // If the file doesn't exist yet (seed hasn't run, or Polygon provider active),
+    // return an empty map — company names will be null.
     return {};
   }
 }
 
 // ---------------------------------------------------------------------------
-// Step 2: Fetch Polygon universe quotes
+// Step 2: Fetch Polygon universe quotes (price layer — always Polygon)
 // ---------------------------------------------------------------------------
 
 function getPolygonApiKey(): string {
@@ -374,304 +366,88 @@ async function fetchUniverseQuotes(tickers: string[]): Promise<QuoteMap> {
 }
 
 // ---------------------------------------------------------------------------
-// Steps 3–7: Fetch SEC fundamentals and enrich per ticker
+// Steps 3–7: Fetch fundamentals via provider, enrich, and score
 // ---------------------------------------------------------------------------
-
-const SEC_FACTS_BASE = 'https://data.sec.gov/api/xbrl/companyfacts';
-const SEC_TICKERS_URL = 'https://www.sec.gov/files/company_tickers.json';
-
-function getSecUserAgent(): string {
-  const ua = process.env.SEC_USER_AGENT?.trim();
-  if (!ua) throw new Error('Missing SEC_USER_AGENT environment variable.');
-  return ua;
-}
-
-/** Fetch live SEC ticker→CIK map as fallback when sec_cik_map.json is missing entries. */
-let liveCikMap: Map<string, string> | null = null;
-let liveCikMapInFlight: Promise<Map<string, string>> | null = null;
-
-async function getLiveCikMap(): Promise<Map<string, string>> {
-  if (liveCikMap) return liveCikMap;
-  if (liveCikMapInFlight) return liveCikMapInFlight;
-
-  liveCikMapInFlight = (async () => {
-    const response = await fetch(SEC_TICKERS_URL, {
-      cache: 'no-store',
-      headers: { 'User-Agent': getSecUserAgent(), Accept: 'application/json' }
-    });
-    if (!response.ok) throw new Error(`SEC tickers fetch failed (${response.status}).`);
-    const payload = (await response.json()) as Record<string, { cik_str: number; ticker: string }>;
-    const map = new Map<string, string>();
-    for (const entry of Object.values(payload)) {
-      const t = entry.ticker?.trim().toUpperCase();
-      if (t && Number.isFinite(entry.cik_str)) {
-        map.set(t, String(Math.trunc(entry.cik_str)).padStart(10, '0'));
-      }
-    }
-    liveCikMap = map;
-    return map;
-  })();
-
-  try {
-    return await liveCikMapInFlight;
-  } finally {
-    liveCikMapInFlight = null;
-  }
-}
-
-// --- SEC fact parsing helpers (same logic as secFundamentalsDataProvider) ---
-
-function asTimestamp(value?: string): number {
-  if (!value) return Number.NaN;
-  return new Date(`${value}T00:00:00.000Z`).getTime();
-}
-
-function hasValidValue(p: FactPoint): p is FactPoint & { val: number; end: string } {
-  return typeof p.val === 'number' && Number.isFinite(p.val) && !!p.end;
-}
-
-function periodLengthDays(p: FactPoint): number | null {
-  if (!p.start || !p.end) return null;
-  const days = (asTimestamp(p.end) - asTimestamp(p.start)) / 86_400_000;
-  return Number.isFinite(days) ? days : null;
-}
-
-function isStandaloneQuarter(p: FactPoint): boolean {
-  const fp = p.fp?.toUpperCase();
-  if (fp !== 'Q1' && fp !== 'Q2' && fp !== 'Q3' && fp !== 'Q4') return false;
-  const days = periodLengthDays(p);
-  return days === null || (days >= 45 && days <= 120);
-}
-
-function pickUnit(units: Record<string, FactPoint[]> | undefined, preferred: string[]): FactPoint[] {
-  if (!units) return [];
-  for (const u of preferred) if (units[u]?.length) return units[u];
-  return Object.values(units).find((r) => r.length > 0) ?? [];
-}
-
-function getFactPoints(payload: CompanyFactsResponse, concepts: string[], units: string[]): FactPoint[] {
-  const gaap = payload.facts?.['us-gaap'];
-  if (!gaap) return [];
-  for (const concept of concepts) {
-    const pts = pickUnit(gaap[concept]?.units, units);
-    if (pts.length) return pts;
-  }
-  return [];
-}
-
-function computeTtmFromQuarters(points: FactPoint[]): number | null {
-  const quarters = points
-    .filter((p): p is FactPoint & { val: number; end: string } => isStandaloneQuarter(p) && hasValidValue(p))
-    .sort((a, b) => asTimestamp(b.end) - asTimestamp(a.end));
-
-  const seen = new Set<string>();
-  const unique: Array<FactPoint & { val: number; end: string }> = [];
-  for (const p of quarters) {
-    const key = `${p.fy ?? ''}-${p.fp ?? ''}-${p.end}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    unique.push(p);
-    if (unique.length === 4) break;
-  }
-
-  if (unique.length < 4) return null;
-  const spanDays = (asTimestamp(unique[0].end) - asTimestamp(unique[3].end)) / 86_400_000;
-  if (!Number.isFinite(spanDays) || spanDays > 430) return null;
-  return unique.reduce((s, p) => s + p.val, 0);
-}
-
-function computeAnnualFallback(points: FactPoint[]): number | null {
-  const annual = points
-    .filter((p): p is FactPoint & { val: number; end: string } => p.fp?.toUpperCase() === 'FY' && hasValidValue(p))
-    .sort((a, b) => asTimestamp(b.end) - asTimestamp(a.end));
-  return annual[0]?.val ?? null;
-}
-
-function computeTtm(points: FactPoint[]): number | null {
-  return computeTtmFromQuarters(points) ?? computeAnnualFallback(points);
-}
-
-function computeRevenueGrowthYoY(points: FactPoint[]): number | null {
-  const annual = points
-    .filter((p): p is FactPoint & { val: number; end: string } => p.fp?.toUpperCase() === 'FY' && hasValidValue(p))
-    .sort((a, b) => asTimestamp(b.end) - asTimestamp(a.end));
-  if (annual.length < 2) return null;
-  const current = annual[0].val;
-  const prior = annual[1].val;
-  if (!prior) return null;
-  return ((current - prior) / Math.abs(prior)) * 100;
-}
-
-function getLatestEndDate(...pointSets: FactPoint[][]): string | null {
-  const ts = pointSets
-    .flat()
-    .filter(hasValidValue)
-    .map((p) => asTimestamp(p.end))
-    .filter((v) => Number.isFinite(v));
-  if (!ts.length) return null;
-  return new Date(Math.max(...ts)).toISOString();
-}
-
-type SecFacts = {
-  epsTtm: number | null;
-  revenueTtm: number | null;
-  revenueGrowthYoY: number | null;
-  operatingMargin: number | null;
-  sharesOutstanding: number | null;
-  asOf: string | null;
-};
-
-function parseCompanyFacts(payload: CompanyFactsResponse): SecFacts {
-  const revenuePoints = getFactPoints(
-    payload,
-    ['Revenues', 'RevenueFromContractWithCustomerExcludingAssessedTax', 'SalesRevenueNet'],
-    ['USD']
-  );
-  const opIncomePoints = getFactPoints(payload, ['OperatingIncomeLoss'], ['USD']);
-  const epsPoints = getFactPoints(
-    payload,
-    ['EarningsPerShareDiluted', 'EarningsPerShareBasic'],
-    ['USD/shares']
-  );
-  const sharesPoints = getFactPoints(payload, ['CommonStockSharesOutstanding'], ['shares']);
-
-  const revenueTtm = computeTtm(revenuePoints);
-  const opIncomeTtm = computeTtm(opIncomePoints);
-  const epsTtm = computeTtm(epsPoints);
-
-  const operatingMargin =
-    revenueTtm !== null && opIncomeTtm !== null && revenueTtm !== 0
-      ? (opIncomeTtm / revenueTtm) * 100
-      : null;
-
-  const revenueGrowthYoY = computeRevenueGrowthYoY(revenuePoints);
-
-  const sharesOutstanding =
-    sharesPoints
-      .filter(hasValidValue)
-      .sort((a, b) => asTimestamp(b.end) - asTimestamp(a.end))[0]?.val ?? null;
-
-  return {
-    epsTtm,
-    revenueTtm,
-    revenueGrowthYoY,
-    operatingMargin,
-    sharesOutstanding,
-    asOf: getLatestEndDate(revenuePoints, opIncomePoints, epsPoints)
-  };
-}
-
-async function fetchSecFacts(cik: string): Promise<SecFacts> {
-  const ua = getSecUserAgent();
-  const url = `${SEC_FACTS_BASE}/CIK${cik}.json`;
-  const response = await fetch(url, {
-    cache: 'no-store',
-    headers: { 'User-Agent': ua, Accept: 'application/json' }
-  });
-  if (!response.ok) throw new Error(`SEC facts fetch failed for CIK ${cik} (${response.status}).`);
-  const payload = (await response.json()) as CompanyFactsResponse;
-  return parseCompanyFacts(payload);
-}
-
-function buildMockFacts(ticker: string): SecFacts {
-  const seed = ticker.split('').reduce((s, c) => s + c.charCodeAt(0), 0);
-  const revenueTtm = 6_000_000_000 + (seed % 220) * 900_000_000;
-  const opIncomeTtm = revenueTtm * (0.05 + (seed % 26) * 0.012);
-  const priorRevenue = revenueTtm / (1 + (-0.04 + (seed % 18) * 0.015));
-  return {
-    epsTtm: 1.2 + (seed % 80) / 10,
-    revenueTtm,
-    revenueGrowthYoY: ((revenueTtm - priorRevenue) / Math.abs(priorRevenue)) * 100,
-    operatingMargin: (opIncomeTtm / revenueTtm) * 100,
-    sharesOutstanding: 500_000_000 + (seed % 200) * 10_000_000,
-    asOf: new Date().toISOString()
-  };
-}
-
-// Known mock fundamentals for AAPL and MSFT (mirrors mockFundamentalsDataProvider)
-const knownMockFacts: Record<string, Partial<SecFacts>> = {
-  AAPL: { epsTtm: 6.43, revenueTtm: 383_300_000_000, revenueGrowthYoY: 2.8, operatingMargin: 30.1, sharesOutstanding: 15_400_000_000 },
-  MSFT: { epsTtm: 11.8, revenueTtm: 236_600_000_000, revenueGrowthYoY: 15.4, operatingMargin: 44.6, sharesOutstanding: 7_440_000_000 }
-};
 
 async function enrichAllTickers(
   tickers: string[],
   secMap: SecCikMap,
   quotes: QuoteMap
 ): Promise<EnrichedTicker[]> {
-  const real = isRealMode();
-
-  // In real mode we need the live CIK map as fallback for tickers not in sec_cik_map.json
-  let cikFallback: Map<string, string> | null = null;
-  if (real) {
-    try {
-      cikFallback = await getLiveCikMap();
-    } catch {
-      // Non-fatal; we'll skip tickers whose CIK we can't resolve
-    }
-  }
-
+  // Grab whichever provider is active (polygon or sec, depending on env vars).
+  const provider = getFundamentalsDataProvider();
   const results: EnrichedTicker[] = [];
 
   for (const ticker of tickers) {
     const quote = quotes[ticker] ?? null;
     const latestPrice = quote?.price ?? null;
-    const secEntry = secMap[ticker] ?? null;
-    const companyName = secEntry?.name ?? null;
 
-    let facts: SecFacts;
+    // Company name — sourced from sec_cik_map.json today; M7.1 will add a
+    // Polygon company-name lookup so the CIK map becomes unnecessary.
+    const companyName = secMap[ticker]?.name ?? null;
 
-    if (real) {
-      const cik = secEntry?.cik ?? cikFallback?.get(ticker) ?? null;
-      if (!cik) {
-        // Can't resolve CIK — emit null fundamentals but keep the ticker
-        facts = { epsTtm: null, revenueTtm: null, revenueGrowthYoY: null, operatingMargin: null, sharesOutstanding: null, asOf: null };
-      } else {
-        try {
-          facts = await fetchSecFacts(cik);
-        } catch {
-          facts = { epsTtm: null, revenueTtm: null, revenueGrowthYoY: null, operatingMargin: null, sharesOutstanding: null, asOf: null };
-        }
-      }
-    } else {
-      // Mock mode: use known values or generate deterministic ones
-      const base = buildMockFacts(ticker);
-      const known = knownMockFacts[ticker];
-      facts = known ? { ...base, ...known, asOf: new Date().toISOString() } : base;
+    // -----------------------------------------------------------------------
+    // Step 3 — fetch fundamentals via the active provider
+    // -----------------------------------------------------------------------
+    let fundamentals;
+    try {
+      fundamentals = await provider.getFundamentals(ticker);
+    } catch {
+      // Non-fatal: keep the ticker in rankings with null fundamentals.
+      fundamentals = {
+        ticker,
+        marketCap: null,
+        peTtm: null,
+        ps: null,
+        epsTtm: null,
+        revenueTtm: null,
+        revenueGrowthYoY: null,
+        operatingMargin: null,
+        sharesOutstanding: null,
+        asOf: null
+      };
     }
 
-    // Derived fields
+    // -----------------------------------------------------------------------
+    // Steps 4–6 — derive price-sensitive ratios from live quote + fundamentals
+    //
+    // sharesOutstanding comes from the provider when available (SEC provides it;
+    // Polygon will add it in M7.1).  marketCap and ps fall back to the provider's
+    // pre-computed values when shares are absent (e.g. mock provider).
+    // -----------------------------------------------------------------------
+    const sharesOutstanding = fundamentals.sharesOutstanding ?? null;
+
     const peTtm =
-      latestPrice !== null && facts.epsTtm !== null && facts.epsTtm !== 0
-        ? latestPrice / facts.epsTtm
+      latestPrice !== null && fundamentals.epsTtm !== null && fundamentals.epsTtm !== 0
+        ? latestPrice / fundamentals.epsTtm
         : null;
 
     const marketCap =
-      latestPrice !== null && facts.sharesOutstanding !== null
-        ? latestPrice * facts.sharesOutstanding
-        : null;
+      latestPrice !== null && sharesOutstanding !== null
+        ? latestPrice * sharesOutstanding
+        : (fundamentals.marketCap ?? null);
 
     const ps =
-      marketCap !== null && facts.revenueTtm !== null && facts.revenueTtm !== 0
-        ? marketCap / facts.revenueTtm
-        : null;
+      marketCap !== null && fundamentals.revenueTtm !== null && fundamentals.revenueTtm !== 0
+        ? marketCap / fundamentals.revenueTtm
+        : (fundamentals.ps ?? null);
 
-    // M5.4 – resolve the ticker's sector for optional v2 sector-relative scoring
+    // -----------------------------------------------------------------------
+    // Step 7 — score; sector is used for v2 sector-relative scoring only
+    // -----------------------------------------------------------------------
     const sector = TICKER_SECTOR_MAP[ticker] ?? null;
 
-    // Score calculation — happens here, once, never at render time.
-    // `sector` is only used when SCORE_VERSION === "v2"; ignored in v1.
     const {
       total: valueScore,
       breakdown: scoreBreakdown,
       scoreVersion,
-      weights: scoreWeights,
+      weights: scoreWeights
     } = calculateValueScore({
       peTtm,
       ps,
-      revenueGrowthYoY: facts.revenueGrowthYoY,
-      operatingMargin: facts.operatingMargin,
-      sector,
+      revenueGrowthYoY: fundamentals.revenueGrowthYoY,
+      operatingMargin: fundamentals.operatingMargin,
+      sector
     });
 
     results.push({
@@ -681,16 +457,16 @@ async function enrichAllTickers(
       marketCap,
       peTtm,
       ps,
-      epsTtm: facts.epsTtm,
-      revenueTtm: facts.revenueTtm,
-      revenueGrowthYoY: facts.revenueGrowthYoY,
-      operatingMargin: facts.operatingMargin,
+      epsTtm: fundamentals.epsTtm,
+      revenueTtm: fundamentals.revenueTtm,
+      revenueGrowthYoY: fundamentals.revenueGrowthYoY,
+      operatingMargin: fundamentals.operatingMargin,
       valueScore,
       scoreBreakdown,
       scoreVersion,
       scoreWeights,
       sector,
-      fundamentalsAsOf: facts.asOf
+      fundamentalsAsOf: fundamentals.asOf
     });
   }
 
