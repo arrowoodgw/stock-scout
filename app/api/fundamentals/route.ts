@@ -51,9 +51,6 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(fundamentals);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Could not load fundamentals.';
-    if (message.includes('Missing SEC_USER_AGENT')) {
-      return NextResponse.json({ error: 'Service configuration error.' }, { status: 500 });
-    }
     const status = message.includes('Invalid') || message.includes('Please provide') ? 400 : 502;
     return NextResponse.json({ error: message }, { status });
   }

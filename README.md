@@ -160,7 +160,6 @@ Configure production env vars in Vercel (see full table below), including:
 - `DATA_MODE`
 - `NEXT_PUBLIC_DATA_MODE`
 - `POLYGON_API_KEY` (real mode)
-- `SEC_USER_AGENT` (real mode)
 - `CRON_SECRET` (required for cron auth)
 
 ### 2) Cron schedule
@@ -180,7 +179,7 @@ Configure production env vars in Vercel (see full table below), including:
 ### 3) Recommended production settings
 - Keep `PRELOAD_REQUIRE_ADMIN=1` to harden manual refresh endpoint.
 - Use a strong random `CRON_SECRET`.
-- Run real mode only when Polygon/SEC credentials are configured.
+- Run real mode only when Polygon credentials are configured.
 - Monitor `/api/health` and preload logs after each deploy.
 
 ---
@@ -198,7 +197,6 @@ cp .env.local.example .env.local
 | `DATA_MODE` | No (defaults to mock) | `mock` / `real` | Server data source mode for preload and API routes. |
 | `NEXT_PUBLIC_DATA_MODE` | Yes (should match `DATA_MODE`) | `mock` / `real` | Client-visible mode flag used by providers. |
 | `POLYGON_API_KEY` | Yes in `real` mode | `pk_xxx` | Polygon quote/history API authentication. |
-| `SEC_USER_AGENT` | Yes in `real` mode | `Jane Doe jane@domain.com` | Required SEC EDGAR user-agent identity. |
 | `CRON_SECRET` | Yes for cron + protected refresh | long random string | Bearer secret for `/api/cron/refresh` and optional admin preload gating. |
 | `PRELOAD_REQUIRE_ADMIN` | Optional | `1` | If set to `1`, `POST /api/preload` requires bearer auth. |
 | `SCORE_VERSION` | Optional | `v1` / `v2` | Selects score algorithm version (`v1` default, `v2` sector-relative). |
@@ -224,7 +222,6 @@ npm run dev       # start Next.js in development mode
 npm run build     # production build
 npm run start     # run production server
 npm run lint      # lint project
-npm run seed:sec  # regenerate data/sec_cik_map.json
 ```
 
 ### Real mode quick start
@@ -234,7 +231,6 @@ npm run seed:sec  # regenerate data/sec_cik_map.json
 DATA_MODE=real
 NEXT_PUBLIC_DATA_MODE=real
 POLYGON_API_KEY=your_polygon_key
-SEC_USER_AGENT=Your Name your@email.com
 CRON_SECRET=your_long_random_secret
 PRELOAD_REQUIRE_ADMIN=1
 ```
@@ -282,8 +278,7 @@ Use these logs to detect slow refreshes, startup failures, and repeated reload c
 
 - **Universe list**: `src/universe/top50MarketCap.ts`
 - **Market prices/history**: Polygon.io APIs
-- **Fundamentals**: SEC EDGAR Company Facts
-- **Ticker→CIK mapping**: `data/sec_cik_map.json` (generated via `npm run seed:sec`)
+- **Fundamentals**: Polygon.io Fundamentals API
 
 ---
 
@@ -296,8 +291,6 @@ Portfolio simulation data is stored locally in `data/portfolio.json` (gitignored
 ## Rate Limits & Operational Notes
 
 - Polygon free-tier limits are strict; grouped endpoints reduce fan-out.
-- SEC EDGAR requires a valid descriptive user-agent.
-- In `real` mode, full preload can take ~1–2 minutes depending on network and SEC response times.
 - Cache-first serving keeps UI responsive even when upstream providers are slow.
 
 ---

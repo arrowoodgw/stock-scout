@@ -41,7 +41,7 @@ export async function POST(request: NextRequest) {
 
   const forceRefresh = request.nextUrl.searchParams.get('refresh') === '1';
 
-  // Fire-and-forget: don't block the response waiting for all 50 SEC calls.
+  // Fire-and-forget: don't block the response waiting for the full preload.
   // The client can poll GET /api/preload for status, or GET /api/rankings.
   if (forceRefresh) {
     void triggerRefresh();

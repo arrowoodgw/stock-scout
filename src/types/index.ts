@@ -59,7 +59,7 @@ export type EnrichedTicker = {
   // --- Identity ---
   /** Uppercase ticker symbol, e.g. "AAPL" */
   ticker: string;
-  /** Company name from SEC mapping, e.g. "Apple Inc." */
+  /** Company name, e.g. "Apple Inc." */
   companyName: string | null;
 
   // --- Market data ---
@@ -68,7 +68,7 @@ export type EnrichedTicker = {
   /** Market capitalisation in USD. Null if unavailable. */
   marketCap: number | null;
 
-  // --- Fundamentals (TTM from SEC EDGAR) ---
+  // --- Fundamentals (TTM) ---
   /** P/E ratio (TTM) = latestPrice / epsTtm. Null if either is unavailable. */
   peTtm: number | null;
   /** P/S ratio (TTM) = marketCap / revenueTtm. Null if either is unavailable. */
