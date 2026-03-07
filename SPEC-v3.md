@@ -1,5 +1,7 @@
 # Stock Scout SPEC v3.0 (February 2026)
 
+> **Superseded by [SPEC-v4.md](./SPEC-v4.md)** — M7 migrates fundamentals from SEC EDGAR to Polygon.io and is tracked there. This document covers M5 and M6 (both complete).
+
 ## Goal
 Production-ready stock scouting app with fully automated data pipeline.
 
